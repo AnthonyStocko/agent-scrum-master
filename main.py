@@ -2506,7 +2506,7 @@ def analyse_last_run(label: str, lot: dict, worktree: str, files: list, failing:
         build=next((v.get("build") for v in failing.values() if v.get("build")), ""))
     prompt = render_prompt("cucumber_client_fix", **{
         "logs_block": "", "donnees_test": cucumber_test_data.prompt_block(),
-        "regle_spec_code": cucumber_decisions.spec_code_rule(), "competences": "", **values,
+        "regle_spec_code": cucumber_decisions.spec_code_rule(), "regle_donnees": cucumber_decisions.data_change_rule(), "competences": "", **values,
         "logs_block": values.get("logs_block", "") + gc_block}, lot_label=label,
         etape="ANALYSE DU DERNIER RUN (lecture seule)", erreurs=FINAL_ANALYSIS_RULE + "\n\n" + "\n".join(lines),
         fichiers="\n".join(f"- {f}" for f in files))
@@ -2612,6 +2612,17 @@ def verify_execution_lot(lot: dict, lot_specs: list, label: str, worktree: str, 
         initial.update({s.get("tag"): s.get("message", "") for s in lot.get("corrections") or [] if s.get("tag")})
     described = list((lot.get("correction") or {}).get("corrections") or [])
     second_chance = set()
+    # Autonomie : changements de données (Given) proposés par la correction, à appliquer au tour suivant. À la
+    # reprise d'un lot, ceux proposés au run précédent (restantes « validation_humaine ») sont repris d'office.
+    to_apply, applied_once = {}, set()
+    if cucumber_decisions.autonomous():
+        previous = (lot.get("correction") or {}).get("restantes_detail") or []
+        to_apply = cucumber_decisions.data_changes_to_apply(previous, set(result["scenarios"]))
+        for tag, entries in to_apply.items():
+            for entry in entries:
+                print(f"[LOT {label}] 🤖 Reprise : changement de données décidé par l'agent, appliqué à la prochaine "
+                      f"correction — {entry['valeur'].get('step', '')} « {entry['valeur'].get('avant', '')} » → "
+                      f"« {entry['valeur'].get('apres', '')} ».")
     # Cause prouvée par la dernière correction de chaque scénario (cucumber_fix_budget.proven_causes) ; le dernier
     # run a-t-il été lu par une correction ?
     proven, last_run_read, quota_hit = {}, False, False
@@ -2686,12 +2697,14 @@ def verify_execution_lot(lot: dict, lot_specs: list, label: str, worktree: str, 
                     "prouvé. Pas de preuve possible : ne modifie rien et explique ce qui manque dans « restantes ».")
             # Sortie d'un diagnostic temporaire exécuté au tour précédent
             lines += cucumber_diagnostic.diagnostic_lines(item)
+            if tag in to_apply:
+                lines += cucumber_decisions.apply_instruction_lines(to_apply[tag])
         lines += [f"- {e}" for e in violations]
         # Logs serveur du run de vérification (Groundcover, si activé) : fenêtre de chaque step en échec
         gc_block = build_mcp_logs_block("cucumber-verify-fix", client, [
             {"id": v["id"], "step": v.get("step", ""), "heure": v.get("heure", "")} for v in bad.values()],
             build=next((v.get("build") for v in bad.values() if v.get("build")), ""))
-        prompt = render_prompt("cucumber_client_fix", **{"logs_block": "", "donnees_test": cucumber_test_data.prompt_block(), "regle_spec_code": cucumber_decisions.spec_code_rule(), "competences": skills.prompt_block("cucumber-correction", "\n".join(lines)), **values, "logs_block": values.get("logs_block", "") + gc_block}, lot_label=label, etape="VÉRIFICATION PAR EXÉCUTION",
+        prompt = render_prompt("cucumber_client_fix", **{"logs_block": "", "donnees_test": cucumber_test_data.prompt_block(), "regle_spec_code": cucumber_decisions.spec_code_rule(), "regle_donnees": cucumber_decisions.data_change_rule(), "competences": skills.prompt_block("cucumber-correction", "\n".join(lines)), **values, "logs_block": values.get("logs_block", "") + gc_block}, lot_label=label, etape="VÉRIFICATION PAR EXÉCUTION",
                                erreurs="\n".join(lines) + cucumber_incidents.context_block(
                                    client, [{"step": v.get("step", ""), "message": v.get("motif", "")}
                                             for v in bad.values()]),
@@ -2735,6 +2748,19 @@ def verify_execution_lot(lot: dict, lot_specs: list, label: str, worktree: str, 
             if candidate:
                 lesson_candidates[tag] = candidate
         deployed, refused = apply_findings(fix_result, bad, f"correction {attempt + 1}")
+        for tag in list(to_apply):
+            if tag in bad:
+                applied_once.add(tag)
+        to_apply = {t: v for t, v in to_apply.items() if t not in applied_once}
+        if cucumber_decisions.autonomous():
+            for tag, entries in cucumber_decisions.data_changes_to_apply(
+                    cucumber_diagnostic.parse_remaining(fix_result), set(bad)).items():
+                if tag not in applied_once:
+                    to_apply[tag] = entries
+                    for entry in entries:
+                        print(f"[LOT {label}] 🤖 Décision prise par l'agent (autonomie) : {entry['valeur'].get('step', '')} "
+                              f"« {entry['valeur'].get('avant', '')} » → « {entry['valeur'].get('apres', '')} » — "
+                              f"{entry['cause']} ; appliquée au tour suivant.")
         for error in refused:
             print(f"[LOT {label}] ⛔ {error}")
         violations = refused + cucumber_a_revoir.check_corrections(worktree, before)
@@ -2793,14 +2819,15 @@ def verify_execution_lot(lot: dict, lot_specs: list, label: str, worktree: str, 
                   f"{rel}")
         # Scénario corrigé mais pas relancé (décision humaine en attente, correction sans modification) : rien de
         # nouveau à lire, on n'y revient pas
-        waiting = {t for t in sent if t not in present and t in to_fix()}
+        waiting = {t for t in sent if t not in present and t in to_fix() and t not in to_apply}
         for tag in sorted(waiting):
             print(f"[LOT {label}] ⏸ {result['scenarios'][tag]['id']} : non relancé ("
                   + ("aucune modification" if unchanged else "décision humaine en attente")
                   + "), arrêt des corrections pour ce scénario.")
         stuck |= waiting
         # Même échec qu'avant la correction : ce scénario ne repart plus (sauf diagnostic dont la sortie est nouvelle)
-        newly = (set() if temporary and present else cucumber_fix_budget.stuck_after(sent, to_fix())) - waiting
+        newly = ((set() if temporary and present else cucumber_fix_budget.stuck_after(sent, to_fix())) - waiting
+                 - set(to_apply))
         # Même message Cucumber mais cause nouvelle prouvée par la correction (autre erreur serveur, autre règle) :
         # c'est un progrès, le run suivant est analysé
         moved = {t for t in newly if new_causes.get(t) and new_causes[t] != proven.get(t)}
@@ -3201,7 +3228,7 @@ def verify_cucumber_lot(client: str, label: str, worktree: str, base: str, cucum
         resumed = bool(lot and lot.get("session") and resume_lot_session())
         print(f"[LOT {label}] Correction {attempt + 1}/{attempts} ({len(check['erreurs'])} erreur(s)) "
               + ("(reprise de la session du lot)..." if resumed else f"({fix_model}, effort {effort or 'défaut'})..."))
-        prompt = render_prompt("cucumber_client_fix", **{"logs_block": "", "donnees_test": cucumber_test_data.prompt_block(), "regle_spec_code": cucumber_decisions.spec_code_rule(), "competences": skills.prompt_block("cucumber-correction", " ".join(check["erreurs"])), **values}, lot_label=label, etape=check["etape"].upper(),
+        prompt = render_prompt("cucumber_client_fix", **{"logs_block": "", "donnees_test": cucumber_test_data.prompt_block(), "regle_spec_code": cucumber_decisions.spec_code_rule(), "regle_donnees": cucumber_decisions.data_change_rule(), "competences": skills.prompt_block("cucumber-correction", " ".join(check["erreurs"])), **values}, lot_label=label, etape=check["etape"].upper(),
                                erreurs="\n".join(f"- {e}" for e in check["erreurs"] + violations),
                                fichiers="\n".join(f"- {f}" for f in files))
         before = cucumber_a_revoir.snapshot(worktree, files)
@@ -3850,7 +3877,7 @@ def run_correction_lot(lot: dict, label: str, worktree: str, values: dict, model
     gc_block = build_mcp_logs_block("cucumber-import-fix", values.get("client_name", ""), lot["corrections"],
                                     build=imported.get("build", ""),
                                     pod=(imported.get("console") or {}).get("pod") or None)
-    prompt = render_prompt("cucumber_client_fix", **{"logs_block": "", "donnees_test": cucumber_test_data.prompt_block(), "regle_spec_code": cucumber_decisions.spec_code_rule(), "competences": skills.prompt_block("cucumber-correction", "\n".join(lines)), **values, "logs_block": values.get("logs_block", "") + gc_block}, lot_label=label, etape="RAPPORT D'EXÉCUTION IMPORTÉ",
+    prompt = render_prompt("cucumber_client_fix", **{"logs_block": "", "donnees_test": cucumber_test_data.prompt_block(), "regle_spec_code": cucumber_decisions.spec_code_rule(), "regle_donnees": cucumber_decisions.data_change_rule(), "competences": skills.prompt_block("cucumber-correction", "\n".join(lines)), **values, "logs_block": values.get("logs_block", "") + gc_block}, lot_label=label, etape="RAPPORT D'EXÉCUTION IMPORTÉ",
                            erreurs="\n".join(lines) + cucumber_db_proof.prompt_block(data, db_available)
                            + cucumber_incidents.context_block(values.get("client_name", ""), [
                                {"step": s.get("step", ""), "message": s.get("message", "")}

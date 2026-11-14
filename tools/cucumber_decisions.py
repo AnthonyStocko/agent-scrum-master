@@ -365,3 +365,54 @@ def sync_state(state: dict, decision: dict) -> None:
         if decision["type"] == "desactivation" and decision["statut"] == "refusee":
             lot["a_revoir"] = [e for e in lot.get("a_revoir") or []
                                if (e["fichier"], e["titre"]) != (decision.get("fichier"), decision.get("titre"))]
+
+
+# Changements de données de mise en place (Given) que l'agent applique lui-même en autonomie : jamais un
+# attendu (Then), jamais une donnée de vérification. Le contrôle des corrections (cucumber_a_revoir) reste actif.
+_ASSERTION_STEP_HINTS = ("contrôle", "controle", "vérif", "verif", "existe", "attendu", "est en statut",
+                         "le message", "affiche", "n'existe pas")
+
+
+def is_setup_change(entry: dict) -> bool:
+    """Vrai si l'entrée « validation_humaine » porte sur une donnée de mise en place (Given), avec avant et après."""
+    valeur = entry.get("valeur") or {}
+    step = str(valeur.get("step", "")).strip().lower()
+    if not step or not str(valeur.get("apres", "")).strip():
+        return False
+    return not any(hint in step for hint in _ASSERTION_STEP_HINTS)
+
+
+def data_changes_to_apply(remaining: list, tags: set) -> dict:
+    """{tag: [entrées]} des changements de mise en place proposés par la correction, à appliquer en autonomie."""
+    out = {}
+    for entry in remaining or []:
+        if entry.get("nature") == "validation_humaine" and entry.get("tag") in tags and is_setup_change(entry):
+            out.setdefault(entry["tag"], []).append(entry)
+    return out
+
+
+def apply_instruction_lines(entries: list) -> list:
+    """Consigne ajoutée au prompt de la correction suivante : appliquer les changements décidés par l'agent."""
+    lines = ["  ✅ DÉCISION PRISE PAR L'AGENT (autonomie, aucun accord humain à attendre) : APPLIQUE maintenant ce "
+             "changement de données de mise en place, que tu as proposé au tour précédent, puis vérifie la compilation. "
+             "Ne remets PAS ce point dans « restantes » en validation_humaine : décris-le dans « corrections ». "
+             "Les attendus (Then) ne changent pas."]
+    for entry in entries:
+        valeur = entry.get("valeur") or {}
+        lines.append(f"    - {valeur.get('step', '')} : « {valeur.get('avant', '')} » → « {valeur.get('apres', '')} » "
+                     f"({entry.get('cause', '')})")
+    return lines
+
+
+def data_change_rule() -> str:
+    """Règle 6 bis du prompt de correction pour les données de mise en place (Given / When), selon l'autonomie."""
+    if autonomous():
+        return ("Une valeur changée dans un step de mise en place (Given / When, table comprise : emplacement, code, "
+                "quantité, step de campagne…) change les données du test. En autonomie, tu DÉCIDES et tu APPLIQUES "
+                "toi-même ce changement, sans attendre d'accord, s'il est justifié par une preuve (log serveur, base) "
+                "ou par le modèle d'un test du Standard (cite-le) : décris-le dans « corrections » (avant, après, "
+                "preuve), jamais en « validation_humaine ». Les attendus (Then) ne changent jamais pour faire passer un "
+                "test (règle ci-dessus). Préfère une correction qui garde les données du test quand c'est possible.")
+    return ("Une valeur changée dans un step existant (Given / When, table comprise) change les données du test : elle "
+            "est soumise à une décision humaine (gardée à part, scénario désactivé provisoirement, appliquée après "
+            "validation) ; préfère une correction qui garde les données du test, et justifie toujours ce que tu changes.")
