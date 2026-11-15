@@ -7,7 +7,10 @@ Lue dans le schéma des tests (copie restaurée en configuration copiée, état 
   a (secteur cohérent), sinon dans le secteur le mieux fourni ;
 - emplacements de picking fixe LIBRES (à implanter par le test pour son propre produit) ;
 - préfixe GS1 du site et codes d'UM conformes (18 chiffres, clé GS1), absents de la base ;
-- donneur d'ordres et statuts administratifs existants (configuration).
+- donneur d'ordres et statuts administratifs existants (configuration) ;
+- couple transporteur / mode d'expédition le plus utilisé par les OP du client passées sans erreur de transport : sans
+  lui, une commande (WOI) est rejetée à l'affectation du transport (TRANSPORT_ERROR,
+  CARRIER_DISPATCH_MODE_NOT_COHERENT, build Canson 415) et n'est jamais « A lancer ».
 Un emplacement déjà cité par un autre test du client n'est pas proposé. Les valeurs et leur preuve (requête,
 résultat) sont injectées dans le prompt : l'agent ne les choisit plus lui-même.
 
@@ -28,6 +31,16 @@ LOCATION_COLUMNS = ("wmslocationcode", "wmslocation.reflocation.code", "location
 SEP = "@@"
 _CODE = re.compile(r"^[\w.\-/ ]{1,60}$")
 EMPTY_RESERVE_LESSON = "en configuration copiée, un emplacement de réserve doit être vide"
+TRANSPORT_LESSON = ("une commande (WOI) porte le couple transporteur / mode d'expédition du client "
+                    "(shipmentTransportationInformation : transportServiceLevelCode + carrier), sinon elle est rejetée "
+                    "à l'affectation du transport (TRANSPORT_ERROR, CARRIER_DISPATCH_MODE_NOT_COHERENT)")
+WOI_MARK = "warehousingOutboundInstruction"
+TRANSPORT_SQL = (
+    "SELECT c.code || '@@' || dm.code || '@@' || count(*) AS code FROM wms_preparation_order po "
+    "JOIN ref_carrier c ON c.ref_carrier_id = po.ref_carrier_id "
+    "JOIN ref_dispatch_mode dm ON dm.ref_dispatch_mode_id = po.ref_dispatch_mode_id "
+    "WHERE po.status NOT IN ('TRANSPORT_ERROR', 'CUBING_ERROR', 'CANCELLED') "
+    "AND coalesce(po.rejection_status, 'NONE') = 'NONE' GROUP BY c.code, dm.code ORDER BY count(*) DESC LIMIT 3")
 
 _LOCATION_JOIN = (
     "FROM wms_location l JOIN ref_location rl ON rl.ref_location_id = l.ref_location_id "
@@ -154,9 +167,47 @@ def select(schema: str, query, worktree: str = "", current_files: list = (), sit
     proofs.append({"objet": "donneurs d'ordres et statuts administratifs",
                    "requete": "ref_stock_owner ⋈ ref_admin_status",
                    "resultat": " ; ".join(f"{o[0]} : {o[1] if len(o) > 1 else ''}" for o in owners) or "aucun"})
+    transport = transport_pairs(schema, query)
+    proofs.append({"objet": "couple transporteur / mode d'expédition", "requete": TRANSPORT_SQL,
+                   "resultat": ", ".join(f"{t['transporteur']} / {t['mode']} ({t['op']} OP)" for t in transport)
+                   or "aucun"})
     return {"site": site, "gs1": gs1, "reserves": reserves, "secteur": sector, "pickings": pickings, "um": codes,
-            "donneurs_ordres": [{"code": o[0], "statuts": o[1] if len(o) > 1 else ""} for o in owners],
+            "transport": transport, "donneurs_ordres": [{"code": o[0], "statuts": o[1] if len(o) > 1 else ""} for o in owners],
             "preuves": proofs, "schema": schema, "date": datetime.now().isoformat(timespec="seconds")}
+
+
+def transport_pairs(schema: str, query) -> list:
+    """Couples transporteur / mode d'expédition des OP du client passées sans erreur de transport (plus utilisés
+    d'abord) : [{transporteur, mode, op}]. Base illisible ou aucune OP : []."""
+    return [{"transporteur": r[0], "mode": r[1], "op": r[2] if len(r) > 2 else ""}
+            for r in _rows(query, TRANSPORT_SQL, schema) if len(r) > 1 and r[0] and r[1]]
+
+
+def missing_transport(worktree: str, files: list, schema: str, query) -> list:
+    """
+    Erreurs des commandes (WOI) du lot sans couple transporteur / mode d'expédition alors que les OP du client en
+    portent un (transport_pairs). Base illisible ou client sans couple : [] (jamais bloquant sur une panne).
+    """
+    woi = []
+    for rel in files:
+        path = os.path.join(worktree, *rel.split("/"))
+        if rel.lower().endswith(".xml") and os.path.exists(path):
+            with open(path, encoding="utf-8", errors="replace") as f:
+                text = f.read()
+            if WOI_MARK in text and ("<transportServiceLevelCode>" not in text or "<carrier>" not in text):
+                woi.append(rel)
+    if not woi or not schema:
+        return []
+    pairs = transport_pairs(schema, query)
+    if not pairs:
+        return []
+    best = pairs[0]
+    return [f"{rel} : commande sans couple transporteur / mode d'expédition — {TRANSPORT_LESSON} : ajoute après "
+            f"</plannedDelivery> <shipmentTransportationInformation><transportServiceLevelCode>{best['mode']}"
+            f"</transportServiceLevelCode><carrier><additionalPartyIdentification additionalPartyIdentificationTypeCode="
+            f"\"FOR_INTERNAL_USE_1\">{best['transporteur']}</additionalPartyIdentification></carrier>"
+            f"</shipmentTransportationInformation> (couple de {best['op']} OP du client sans erreur de transport)."
+            for rel in woi]
 
 
 def prompt_block(selection: dict, copied: bool = False) -> str:
@@ -177,6 +228,11 @@ def prompt_block(selection: dict, copied: bool = False) -> str:
     if selection["gs1"]:
         lines.append(f"- Préfixe GS1 du site {selection['site']} : {selection['gs1']} ; codes d'UM conformes (18 "
                      f"chiffres, clé GS1, absents de la base) : " + ", ".join(selection["um"]))
+    for pair in selection.get("transport") or []:
+        lines.append(f"- Couple transporteur / mode d'expédition du client : {pair['transporteur']} / {pair['mode']} "
+                     f"({pair['op']} OP sans erreur de transport) — dans chaque commande (WOI) : "
+                     "shipmentTransportationInformation après plannedDelivery (transportServiceLevelCode = mode, "
+                     "carrier/additionalPartyIdentification FOR_INTERNAL_USE_1 = transporteur)")
     for owner in selection["donneurs_ordres"]:
         lines.append(f"- Donneur d'ordres {owner['code']} ; statuts administratifs existants : {owner['statuts']}")
     lines.append("- Produit : " + ("créé par le test lui-même (jamais un produit de la copie, donnée métier)"

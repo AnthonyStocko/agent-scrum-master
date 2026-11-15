@@ -2303,6 +2303,21 @@ def cucumber_followup(lot: dict, prompt: str, model: str, effort: str, tools: li
         print("[CUCUMBER] Session du lot sans cumul de coût connu : appel neuf au lieu de la reprise.")
         lot.pop("session", None)
         session = ""
+    if session and not cucumber_cost.session_warm(session):
+        # Historique de la session sorti du cache de prompt (run Jenkins de plus de 5 minutes) : sa reprise le
+        # réécrirait en cache à chaque tour → appel neuf, avec le prompt système, le modèle et l'effort du lot
+        print(f"[CUCUMBER] Session du lot hors du cache de prompt (dernier appel il y a plus de "
+              f"{cucumber_cost.resume_max_age()} s) : appel neuf au lieu de la reprise.")
+        system_file = lot.get("systeme", "")
+        system_file = system_file if system_file and os.path.exists(system_file) else ""
+        lot_model, lot_effort = lot.get("modele") or model, lot.get("effort", effort)
+        lot.pop("session", None)
+        returncode, output, usage, limit_hit = run_cucumber_claude(prompt, lot_model, tools, max_turns, run_dir,
+                                                                   lot_effort, system_file, db_log, db_step,
+                                                                   **mcp_kwargs(mcp_step))
+        if usage and usage.get("session_id"):
+            lot["session"] = usage["session_id"]
+        return returncode, output, usage, limit_hit, lot_model, lot_effort
     if session:
         lot_model, lot_effort = lot.get("modele") or model, lot.get("effort", effort)
         system_file = lot.get("systeme", "")
@@ -2762,8 +2777,9 @@ def verify_execution_lot(lot: dict, lot_specs: list, label: str, worktree: str, 
         verify_model, effort = verify_fix_model(model)
         # Modèle dédié : appel neuf (la reprise de la session imposerait le modèle du lot et relirait tout son
         # contexte, l'essentiel du coût d'une correction après exécution)
+        followup_lot = None if verify_model != model else lot
         returncode, output, usage, limit_hit, used_model, effort = cucumber_followup(
-            None if verify_model != model else lot, prompt, verify_model, effort, lot_tools(values),
+            followup_lot, prompt, verify_model, effort, lot_tools(values),
             str(_env_int("CUCUMBER_FIX_MAX_TURNS", 10)), run_dir,
             db_log=lot.setdefault("base", []), db_step="correction après exécution", mcp_step="cucumber-verify-fix")
         report_token_usage(work_key, "cucumber-verify-fix", used_model, usage, len(prompt), returncode, effort)
@@ -2781,10 +2797,16 @@ def verify_execution_lot(lot: dict, lot_specs: list, label: str, worktree: str, 
                   f"l'appliquer avec la preuve déjà obtenue.")
             apply_prompt = cucumber_diagnostic.apply_pending_prompt(pending)
             session = (usage or {}).get("session_id", "")
+            # Reprise bon marché seulement à l'identique (même prompt système, outils, serveurs MCP, modèle, effort)
+            # et cache encore chaud ; sinon appel neuf minimal (le prompt porte la correction et sa preuve)
+            same_system = (followup_lot or {}).get("systeme", "") if (followup_lot or {}).get("session") == session                 else ""
+            same_system = same_system if same_system and os.path.exists(same_system) else ""
+            warm = bool(session) and cucumber_cost.session_warm(session)
             returncode, more_output, more, limit_hit = run_cucumber_claude(
                 apply_prompt, used_model, lot_tools(values), str(_env_int("CUCUMBER_APPLY_MAX_TURNS", 6)), run_dir,
-                effort, db_log=lot.setdefault("base", []), db_step="application de la correction identifiée",
-                resume=session)
+                effort, same_system if warm else "", db_log=lot.setdefault("base", []),
+                db_step="application de la correction identifiée", resume=session if warm else "",
+                **(mcp_kwargs("cucumber-verify-fix") if warm else {}))
             report_token_usage(work_key, "cucumber-verify-apply", used_model, more, len(apply_prompt), returncode,
                                effort)
             on_usage(more)
@@ -3165,6 +3187,13 @@ def check_cucumber_lot(client: str, label: str, worktree: str, base: str, cucumb
         errors += cucumber_test_selection.occupied_reserves(
             worktree, files, cucumber_copied_config.test_schema(own_profile),
             cucumber_copied_config.reference(own_profile).get("date", ""), cucumber_copied_config.copy_query)
+    # Commande (WOI) sans couple transporteur / mode d'expédition alors que les OP du client en portent un
+    if os.getenv("CUCUMBER_TEST_SELECTION", "1").strip() != "0":
+        transport_schema = ((cucumber_copied_config.test_schema(own_profile)
+                             if cucumber_copied_config.active(own_profile) else "")
+                            or os.getenv("CUCUMBER_DB_SCHEMA", "")).strip()
+        errors += cucumber_test_selection.missing_transport(worktree, files, transport_schema,
+                                                            cucumber_copied_config.copy_query)
     # Leçons du client : contrôles déterministes (0 token)
     errors += cucumber_lessons.check_files(worktree, files, cucumber_lessons.load(client))
     # Un test vérifié vert n'est jamais réécrit (empreinte figée à sa vérification)

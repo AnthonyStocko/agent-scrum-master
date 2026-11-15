@@ -9,9 +9,13 @@ Coût des lots Cucumber : plafond par lot et coût cumulé par spécifique (0 to
 - Sessions reprises (--resume) : Claude Code renvoie dans total_cost_usd le coût CUMULÉ de la session et applique
   --max-budget-usd à ce cumul. Le cumul de chaque session est gardé (sessions.json) : le coût d'un appel est l'écart
   avec le cumul précédent, et le budget passé à Claude est le cumul précédent plus le budget restant du lot.
+- Cache : une session reprise n'est bon marché que si son historique est encore dans le cache de prompt (5 minutes,
+  CUCUMBER_RESUME_MAX_AGE) ET si l'appel garde exactement le même prompt système, les mêmes outils et serveurs MCP
+  et le même modèle ; sinon tout l'historique est réécrit en cache à chaque tour (build Canson 415 : 2 tours, 3,20 $).
 """
 import json
 import os
+import time
 from datetime import datetime
 
 DEFAULT_LOT_BUDGET_USD = 15.0
@@ -117,10 +121,34 @@ def _sessions() -> dict:
         return {}
 
 
+TIMES_KEY = "_heures"
+DEFAULT_RESUME_MAX_AGE = 300
+
+
 def session_base(session_id: str):
     """Cumul (USD) déjà dépensé par la session `session_id` ; None si inconnu (session antérieure au suivi)."""
     value = _sessions().get(session_id or "") if session_id else 0.0
-    return None if value is None else float(value)
+    return None if value is None or isinstance(value, dict) else float(value)
+
+
+def resume_max_age() -> int:
+    """Âge maximal (s) du dernier appel d'une session pour la reprendre (durée du cache de prompt)."""
+    try:
+        return max(0, int(os.getenv("CUCUMBER_RESUME_MAX_AGE", "").strip() or DEFAULT_RESUME_MAX_AGE))
+    except ValueError:
+        return DEFAULT_RESUME_MAX_AGE
+
+
+def session_age(session_id: str):
+    """Secondes depuis le dernier appel de la session ; None si inconnu."""
+    stamp = (_sessions().get(TIMES_KEY) or {}).get(session_id or "")
+    return None if stamp is None else max(0.0, time.time() - float(stamp))
+
+
+def session_warm(session_id: str) -> bool:
+    """Historique de la session encore en cache (dernier appel connu de moins de resume_max_age secondes)."""
+    age = session_age(session_id)
+    return age is not None and age <= resume_max_age()
 
 
 def record_session(session_id: str, cumulative) -> None:
@@ -133,6 +161,7 @@ def record_session(session_id: str, cumulative) -> None:
         return
     data = _sessions()
     data[session_id] = round(cumulative, 6)
+    data.setdefault(TIMES_KEY, {})[session_id] = round(time.time(), 1)
     os.makedirs(os.path.dirname(SESSIONS_FILE), exist_ok=True)
     with open(SESSIONS_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=1)

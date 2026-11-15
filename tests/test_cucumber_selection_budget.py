@@ -199,3 +199,52 @@ def test_init_fingerprint_changes_with_init_files(tmp_path, main_module):
     assert first == main_module.init_fingerprint(str(tmp_path), profile)
     write(os.path.join(str(tmp_path), rel), "Feature: Init\n  Scenario: autre\n")
     assert main_module.init_fingerprint(str(tmp_path), profile) != first
+
+
+# --- Couple transporteur / mode d'expédition ----------------------------------------------------------------------
+
+WOI = ("<warehousingOutboundInstruction><plannedDelivery></plannedDelivery>"
+       "<warehousingOutboundInstructionShipmentItem/></warehousingOutboundInstruction>")
+
+
+def test_transport_pair_is_selected_and_a_woi_without_it_is_refused(tmp_path):
+    def db(sql, schema):
+        return [{"code": "1000055472@@MES@@15"}, {"code": "INTERNE@@INTERNE@@1"}] if "ref_dispatch_mode" in sql else []
+    assert ts.transport_pairs("s", db)[0] == {"transporteur": "1000055472", "mode": "MES", "op": "15"}
+    rel = "src/test/resources/cucumber/files/clientx/WOI-X.xml"
+    write(str(tmp_path / rel), WOI)
+    errors = ts.missing_transport(str(tmp_path), [rel], "s", db)
+    assert len(errors) == 1 and "<transportServiceLevelCode>MES" in errors[0] and "1000055472" in errors[0]
+    write(str(tmp_path / rel), WOI.replace("</plannedDelivery>", "</plannedDelivery><shipmentTransportationInformation>"
+                                           "<transportServiceLevelCode>MES</transportServiceLevelCode><carrier>"
+                                           "</carrier></shipmentTransportationInformation>"))
+    assert ts.missing_transport(str(tmp_path), [rel], "s", db) == []
+    # Client sans couple prouvé : jamais bloquant
+    write(str(tmp_path / rel), WOI)
+    assert ts.missing_transport(str(tmp_path), [rel], "s", lambda sql, schema: []) == []
+    block = ts.prompt_block({"site": "01", "schema": "s", "date": "2026-11-15T20:00:00", "reserves": [],
+                             "pickings": [], "gs1": "", "um": [], "donneurs_ordres": [], "preuves": [],
+                             "transport": ts.transport_pairs("s", db)})
+    assert "1000055472 / MES" in block and "shipmentTransportationInformation" in block
+
+
+# --- Cache de prompt des sessions reprises ------------------------------------------------------------------------
+
+def test_session_is_resumed_only_while_its_prompt_cache_is_warm(main_module, monkeypatch, capsys):
+    cost.record_session("chaude", 1.0)
+    assert cost.session_warm("chaude") and not cost.session_warm("inconnue")
+    monkeypatch.setenv("CUCUMBER_RESUME_MAX_AGE", "0")
+    later = cost.time.time() + 10
+    monkeypatch.setattr(cost.time, "time", lambda: later)
+    assert not cost.session_warm("chaude")
+    calls = []
+
+    def fake(prompt, model, tools, max_turns, run_dir, effort, system_file="", db_log=None, db_step="", resume="",
+             **kwargs):
+        calls.append((model, system_file, resume))
+        return 0, "{}", {"session_id": "neuve", "cout_usd": 1.0}, False
+    monkeypatch.setattr(main_module, "run_cucumber_claude", fake)
+    lot = {"session": "chaude", "modele": "opus", "systeme": __file__}
+    main_module.cucumber_followup(lot, "p", "sonnet", "", [], "5", ".")
+    assert calls == [("opus", __file__, "")] and lot["session"] == "neuve"
+    assert "hors du cache de prompt" in capsys.readouterr().out
