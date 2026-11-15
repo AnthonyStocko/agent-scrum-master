@@ -87,6 +87,7 @@ def _isolated_knowledge(tmp_path, monkeypatch):
     # Aucune requête réelle : sélection des données de test et contrôle de version de la base source désactivés
     # (les tests qui en ont besoin passent leur propre requête) ; cumul de coût des sessions temporaire
     monkeypatch.setenv("CUCUMBER_TEST_SELECTION", "0")
+    monkeypatch.setenv("CUCUMBER_ANTICIPATION", "0")
     monkeypatch.setenv("CUCUMBER_SOURCE_VERSION_CHECK", "0")
     from tools import cucumber_cost
     monkeypatch.setattr(cucumber_cost, "SESSIONS_FILE", str(tmp_path / "sessions_cout.json"))
@@ -97,7 +98,7 @@ def _isolated_knowledge(tmp_path, monkeypatch):
     def guarded(*args, **kwargs):
         kept = {name: os.environ.get(name) for name in ("AGENT_KNOWLEDGE_DIR", "GROUNDCOVER_MCP_ENABLED",
                                                          "CUCUMBER_JOB_VALUES_CHECK", "AGENT_RUN_LOGS_DIR",
-                                                         "AGENT_JOURNAL_PATH", "CUCUMBER_TEST_SELECTION",
+                                                         "AGENT_JOURNAL_PATH", "CUCUMBER_TEST_SELECTION", "CUCUMBER_ANTICIPATION",
                                                          "CUCUMBER_SOURCE_VERSION_CHECK")}
         try:
             return original(*args, **kwargs)

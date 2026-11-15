@@ -18,7 +18,7 @@ import requests
 from dotenv import load_dotenv
 
 from tools import env_tools, secret_tools, cucumber_cost, cucumber_lessons
-from tools import cucumber_env_diagnosis, cucumber_copied_config
+from tools import cucumber_env_diagnosis, cucumber_copied_config, cucumber_anticipation, cucumber_anticipation_code
 from tools import bitbucket_std, client_version, cucumber_a_revoir, cucumber_arbitrage, cucumber_compile, cucumber_db_proof, cucumber_fix_budget, cucumber_stray, cucumber_incidents, cucumber_init_fix, cucumber_isolation, cucumber_lock, cucumber_routes, cucumber_test_data, cucumber_test_selection, cucumber_jobs, cucumber_modules, cucumber_delivery, cucumber_library, cucumber_library_upgrade, standard_version, cucumber_bilan, cucumber_checks, cucumber_coverage, cucumber_data_rules, cucumber_disabled, cucumber_guard, cucumber_job, cucumber_decisions, cucumber_detection, cucumber_diagnostic, cucumber_failures, cucumber_environment, cucumber_rules, cucumber_run, cucumber_testability, cucumber_preflight, cucumber_results, cucumber_links, cucumber_server_logs, groundcover_tools, mcp_servers, cucumber_import, cucumber_init, cucumber_recreation, cucumber_init_data, cucumber_initializers, cucumber_profile, cucumber_tools, cucumber_verify, cucumber_versions, cucumber_wait_steps, db_tools, integration_tools, knowledge_tools, pr_review, assistant, db_restore, jenkins_tools, skills
 from tools.jira_cli import attach_files, create_or_get_issue
 from tools.epic_tools import (
@@ -1484,6 +1484,7 @@ def main():
     parser.add_argument("--detect-only", action="store_true", help="generate-cucumber-client : détection automatique du projet (inventaire, profil client, faits de l'initialisation des données), mise en cache par empreinte des commits des dépôts et sautée si elle n'a pas changé ; lecture seule, sans appel à Claude")
     parser.add_argument("--align-library", action="store_true", help="generate-cucumber-client : bibliothèque Cucumber du pom.xml alignée sur la version du Standard du client (Jenkins, à défaut l'application) : seule la version change dans le pom, compilation corrigée dans les steps du projet, dry-run, puis (livraison autonome) runs de l'init et complet, promotion sans régression")
     parser.add_argument("--simple-depot", default="", choices=["", "verifier", "creer", "branche", "aligner"], help="generate-cucumber-client, onglet « Cucumber » simplifié, étape 2 : dépôt <client>-cucumber — constat, création (droits contrôlés), branche de la version, alignement validé de la bibliothèque et du runner, compilation")
+    parser.add_argument("--anticipation", action="store_true", help="generate-cucumber-client : analyse statique d'anticipation (Studio à la version testée : variables d'entrée non déclarées, composants absents, XML), 0 token, sans run ; résultat dans anticipation.json")
     parser.add_argument("--simple-init", default="", choices=["", "auto", "verifier", "appliquer", "completer", "lancer", "corriger"], help="generate-cucumber-client, onglet « Cucumber » simplifié, étape 4 : init du client sur la branche de la version — clear déduit des routes de l'application à sa version, init du Standard adaptée ou init existante comparée, run Jenkins de l'init, correction connue proposée sur échec ; « auto » enchaîne tout (fichiers générés et poussés, init lancée sur Jenkins) jusqu'à une init verte")
     parser.add_argument("--java21", action="store_true", help="generate-cucumber-client : migration Java 21 du projet de tests (pom.xml seul, branche dédiée jamais fusionnée) et contrôle de non-régression : compilation et dry-run en Java 21, runs AVANT (application Java 11) et APRÈS (application Java 21), relance des écarts, rapport, PR proposée sans régression")
     parser.add_argument("--java21-avant", default="", help="--java21 : environnement AVANT confirmé, « composant_version=<v>;kis_version=<v> »")
@@ -1662,7 +1663,7 @@ def main():
                                                      odatio_version)
             cucumber_tools.STD_VERSION[0] = odatio_version
         if remote_std:
-            if args.fix_init_from_import or args.simple_init or args.simple_depot:
+            if args.fix_init_from_import or args.simple_init or args.simple_depot or args.anticipation:
                 # Correction de l'init, étapes 2 et 4 de l'onglet simplifié : code du Standard lu dans Bitbucket
                 # (clear, contribs, modules déployés), aucun clone ni fetch du projet du Standard
                 print("[STANDARD] Standard lu dans Bitbucket (API REST) : aucun clone ni fetch du projet du Standard.")
@@ -1816,6 +1817,9 @@ def main():
         # Étape 2 de l'onglet simplifié : le dépôt <client>-cucumber peut ne pas encore exister
         sys.exit(run_simple_depot(args.client_name, args.client_repo or os.getenv("BITBUCKET_CLIENT_REPO_PATH", ""),
                                   local_client_repo, args.simple_depot, args.cucumber_base_branch))
+    elif is_cucumber_client and args.anticipation:
+        result = run_anticipation(args.client_name, local_client_repo, force=True)
+        sys.exit(0 if result else 2)
     elif is_cucumber_client and args.simple_init:
         if args.simple_init == "auto":
             sys.exit(run_simple_init_auto(args.client_name, local_client_repo, local_cucumber_std_repo,
@@ -2280,6 +2284,69 @@ def test_selection_block(client: str, worktree: str, files: list = ()) -> str:
               f"{', '.join(r['code'] for r in selection['reserves'][:3])}… (secteur {selection['secteur'] or '?'})"
               + (f", préfixe GS1 {selection['gs1']}" if selection.get("gs1") else ""))
     return cucumber_test_selection.prompt_block(selection, copied)
+
+
+ANTICIPATION_FILE = "anticipation.json"
+
+
+def anticipation_path(client: str) -> str:
+    return os.path.join(cucumber_tools.cache_dir(client), ANTICIPATION_FILE)
+
+
+def load_anticipation(client: str) -> dict:
+    try:
+        with open(anticipation_path(client), encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def run_anticipation(client: str, client_root: str, force: bool = False) -> dict:
+    """
+    Analyse statique d'anticipation (cucumber_anticipation, 0 token) à la version testée : processus Studio de la
+    base des tests, version de l'application (référence de la version choisie), forks et Standard du bundle.list.
+    Résultat gardé dans anticipation.json avec son empreinte : recalculé seulement si la version testée a changé
+    (processus Studio déployés, commits du client, référence) ou sur demande. CUCUMBER_ANTICIPATION=0 : désactivée.
+    """
+    if os.getenv("CUCUMBER_ANTICIPATION", "1").strip() == "0":
+        return {}
+    profile = cucumber_profile.effective_profile(cucumber_profile.load_profile(client))
+    schema = ((cucumber_copied_config.test_schema(profile) if cucumber_copied_config.active(profile) else "")
+              or os.getenv("CUCUMBER_DB_SCHEMA", "")).strip()
+    deduction = client_version.saved(client).get("deduction") or {}
+    ref = "origin/" + deduction["ref_client"] if deduction.get("ref_client") else ""
+    repos = cucumber_tools.git_repos(client_root)
+    if not (schema and ref and repos):
+        print(f"[ANTICIPATION] Analyse Studio impossible : "
+              + ", ".join(w for w, ok in (("schéma de la base des tests", schema), ("version du client", ref),
+                                         ("dépôts de l'application", repos)) if not ok) + " manquant(s).")
+        return {}
+    components = cucumber_anticipation.studio_components(schema)
+    commits = {name: cucumber_tools.rev_parse(path, ref) for name, path in repos.items()
+               if cucumber_tools.pick_ref(path, (ref,))}
+    empreinte = cucumber_anticipation.fingerprint(components, commits, ref)
+    previous = load_anticipation(client)
+    if not force and previous.get("empreinte") == empreinte:
+        return previous
+    try:
+        from tools import bitbucket_code
+        std = bitbucket_code.standard("")
+    except Exception as exc:  # noqa: BLE001 - Standard illisible : composants du Standard non vérifiés
+        print(f"[ANTICIPATION] Standard illisible ({exc}) : composants du Standard non vérifiés.")
+        std = None
+    result = cucumber_anticipation_code.analyse_all(components, repos, ref, schema, std, cucumber_jobs._std_candidates,
+                                                    cucumber_copied_config.copy_query)
+    result["a_risque"] = cucumber_anticipation.features_at_risk(
+        (cucumber_tools.load_inventory(client) or {}).get("specifiques") or [],
+        result["anomalies"] + result["code"]["anomalies"])
+    result.update(empreinte=empreinte, date=datetime.now().isoformat(timespec="seconds"), schema=schema)
+    os.makedirs(os.path.dirname(anticipation_path(client)), exist_ok=True)
+    with open(anticipation_path(client), "w", encoding="utf-8") as f:
+        json.dump(result, f, ensure_ascii=False, indent=1)
+    for line in cucumber_anticipation.report_lines(result):
+        print(f"[ANTICIPATION] {line}")
+    return result
 
 
 def resume_lot_session() -> bool:
@@ -7264,6 +7331,12 @@ def run_cucumber_client(args, work_key: str, local_client_repo: str, local_std_r
             print("⚠️ Nouvelle génération : les lots précédents (worktree, commits, etat.json) sont écrasés.")
     state["partiels"] = sorted(set(state.get("partiels") or []) | {i for lot in cucumber_tools.pending_lots(state)
                                                                     for i in lot["ids"] if i in partial})
+    # Analyse statique d'anticipation (0 token) avant toute génération : fonctionnalités à risque signalées
+    anticipation = run_anticipation(client, local_client_repo)
+    for lot in cucumber_tools.pending_lots(state):
+        for spec_id in lot["ids"]:
+            for reason in (anticipation.get("a_risque") or {}).get(spec_id, [])[:3]:
+                print(f"[ANTICIPATION] ⚠️ {spec_id} à risque avant génération : {reason}")
     try:
         worktree = cucumber_tools.prepare_worktree(cucumber_repo_dir, client, state["base"], reset=not (resume_state or complete_state or reprise_state))
     except RuntimeError as e:

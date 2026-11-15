@@ -79,7 +79,7 @@ def _arg_count(descriptor: str) -> int:
 
 
 def parse_class(data: bytes) -> dict:
-    """{nom, super, methodes: {nom: [[arguments, statique, varargs]]}} (méthodes publiques et protégées)."""
+    """{nom, super, interfaces, methodes: {nom: [[arguments, statique, varargs]]}} (méthodes publiques et protégées)."""
     pos, pool = 10, [None]
     count = struct.unpack_from(">H", data, 8)[0]
     while len(pool) < count:
@@ -97,6 +97,7 @@ def parse_class(data: bytes) -> dict:
             pool.append(None)
     class_name = lambda index: pool[pool[index]].replace("/", ".") if index else ""
     _, this, parent, interfaces = struct.unpack_from(">HHHH", data, pos)
+    implemented = [class_name(struct.unpack_from(">H", data, pos + 8 + 2 * i)[0]) for i in range(interfaces)]
     pos += 8 + 2 * interfaces
 
     def members(pos):
@@ -116,7 +117,7 @@ def parse_class(data: bytes) -> dict:
             entry = [_arg_count(descriptor), bool(flags & _ACC_STATIC), bool(flags & _ACC_VARARGS)]
             if entry not in methods.setdefault(name, []):
                 methods[name].append(entry)
-    return {"nom": class_name(this), "super": class_name(parent), "methodes": methods}
+    return {"nom": class_name(this), "super": class_name(parent), "interfaces": implemented, "methodes": methods}
 
 
 def read_jar(jar: str) -> dict:
@@ -129,7 +130,8 @@ def read_jar(jar: str) -> dict:
                     parsed = parse_class(archive.read(entry))
                 except (struct.error, IndexError, KeyError, ValueError, TypeError):
                     continue
-                classes[parsed["nom"]] = {"super": parsed["super"], "methodes": parsed["methodes"]}
+                classes[parsed["nom"]] = {"super": parsed["super"], "interfaces": parsed["interfaces"],
+                                          "methodes": parsed["methodes"]}
     return classes
 
 

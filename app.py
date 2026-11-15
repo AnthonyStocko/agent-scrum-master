@@ -2366,6 +2366,51 @@ def render_simple_init(ctx: dict, step: dict) -> None:
                                mime="text/x-diff", icon=":material/download:", key=f"cs_init_patch_{ctx['client']}")
 
 
+def load_anticipation_result(client: str) -> dict:
+    """Dernière analyse statique d'anticipation du client (anticipation.json), {} sinon."""
+    try:
+        with open(os.path.join(cucumber_tools.cache_dir(client), "anticipation.json"), encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def render_anticipation(ctx: dict, result: dict, disabled: bool = False) -> None:
+    """Analyse statique d'anticipation (Studio à la version testée) : résumé, anomalies, relance."""
+    code = result.get("code") or {}
+    anomalies = [{**a, "source": "Studio"} for a in result.get("anomalies") or []] +         [{**a, "source": "code du client"} for a in code.get("anomalies") or []]
+    version = result.get("version") or {}
+    title = ("Analyse d'anticipation : " + (f"{len(anomalies)} anomalie(s)" if result else "jamais lancée")
+             + (f" ({result['date'][:16].replace('T', ' ')})" if result.get("date") else ""))
+    with st.expander(title, icon=":material/troubleshoot:" if not anomalies else ":material/warning:",
+                     expanded=bool(anomalies)):
+        st.caption("Sans run ni appel à Claude, à la version testée (application, forks du client et Standard lus "
+                   "dans son bundle.list ; processus Studio de la base des tests). Studio : variables passées en "
+                   "entrée non déclarées par l'action ou le sous-processus appelé, composants absents, XML invalide. "
+                   "Code du client (modules déployés) : appels au Standard absents de ses jars à la version, "
+                   "énumérations, traductions et champs personnalisés non déclarés, traitements conditionnés au "
+                   "niveau de log, adresses de services externes en dur. Relancée d'elle-même avant chaque "
+                   "génération si la version testée a changé.")
+        if version:
+            st.markdown(f"Version testée : application @ `{version.get('reference_client', '?')}`, Standard "
+                        f"{version.get('standard') or '?'}, {len(version.get('forks') or {})} fork(s) du client — "
+                        f"{result.get('controles', 0)} appel(s) contrôlé(s), "
+                        f"{len(result.get('non_verifies') or {})} composant(s) non vérifié(s).")
+        if anomalies:
+            st.dataframe([{"Source": a["source"], "Classe": a["classe"], "Anomalie": a["anomalie"],
+                           "Fichier": a["fichier"] + (f":{a['ligne']}" if a.get("ligne") else ""),
+                           "Impact sur les tests": a["impact"], "Action": a["action"]} for a in anomalies],
+                         hide_index=True)
+        unverified = {**(result.get("non_verifies") or {}), **(code.get("non_verifies") or {})}
+        if unverified:
+            st.caption(f"Non vérifiés ({len(unverified)}) : " + " ; ".join(
+                f"{k} ({v})" for k, v in sorted(unverified.items())[:12]))
+        if st.button("Lancer l'analyse" if not result else "Relancer l'analyse", icon=":material/refresh:",
+                     key=f"cs_anticipation_{ctx['client']}", disabled=disabled):
+            simple_run(ctx, "anticipation", ["--anticipation"])
+
+
 def render_simple_tests(ctx: dict, step: dict) -> None:
     """Étape 5 : fonctionnalités choisies dans une liste simple, générées et vérifiées une par une."""
     inventory = cucumber_tools.load_inventory(ctx["client"])
@@ -2375,9 +2420,16 @@ def render_simple_tests(ctx: dict, step: dict) -> None:
     if not features:
         st.caption("Les fonctionnalités du client apparaîtront ici après l'analyse du projet.")
         return
+    anticipation = load_anticipation_result(ctx["client"])
+    risky = anticipation.get("a_risque") or {}
+    render_anticipation(ctx, anticipation, step["etat"] == "bloquee")
     chosen = st.multiselect("Fonctionnalités à tester", [f["id"] for f in features],
-                            format_func=lambda i: next(f["libelle"] for f in features if f["id"] == i),
+                            format_func=lambda i: next(f["libelle"] for f in features if f["id"] == i)
+                            + (" — ⚠ à risque" if risky.get(i) else ""),
                             key=f"cs_features_{ctx['client']}", disabled=step["etat"] == "bloquee")
+    for spec_id in chosen:
+        for reason in (risky.get(spec_id) or [])[:3]:
+            st.warning(f"« {spec_id} » à risque avant génération : {reason}", icon=":material/warning:")
     branch = ((cucumber_tools.load_state(ctx["client"]).get("simple") or {}).get("depot") or {}).get(
         "detail", {}).get("branche", "")
     st.caption(f"Générées et vérifiées une par une, à partir de la branche {branch or 'de la version'}. Une "
