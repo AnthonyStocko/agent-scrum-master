@@ -384,9 +384,14 @@ def is_setup_change(entry: dict) -> bool:
 
 def data_changes_to_apply(remaining: list, tags: set) -> dict:
     """{tag: [entrées]} des changements de mise en place proposés par la correction, à appliquer en autonomie."""
-    out = {}
+    out, seen = {}, set()
     for entry in remaining or []:
         if entry.get("nature") == "validation_humaine" and entry.get("tag") in tags and is_setup_change(entry):
+            valeur = entry.get("valeur") or {}
+            key = (entry["tag"], valeur.get("step", ""), valeur.get("avant", ""), valeur.get("apres", ""))
+            if key in seen:            # même changement repris deux fois (restantes en double) : une seule entrée
+                continue
+            seen.add(key)
             out.setdefault(entry["tag"], []).append(entry)
     return out
 

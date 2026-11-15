@@ -6,6 +6,9 @@ Coût des lots Cucumber : plafond par lot et coût cumulé par spécifique (0 to
   bilan. Chaque appel reçoit au plus le budget restant du lot.
 - Coût cumulé par spécifique : .tmp/cucumber/<client>/couts.json, conservé d'une génération et d'une reprise à
   l'autre ; le coût d'un lot de plusieurs spécifiques est réparti à parts égales.
+- Sessions reprises (--resume) : Claude Code renvoie dans total_cost_usd le coût CUMULÉ de la session et applique
+  --max-budget-usd à ce cumul. Le cumul de chaque session est gardé (sessions.json) : le coût d'un appel est l'écart
+  avec le cumul précédent, et le budget passé à Claude est le cumul précédent plus le budget restant du lot.
 """
 import json
 import os
@@ -99,3 +102,60 @@ def record_lot_run(client: str, lot: dict, generation: str = "") -> dict:
 
 def spec_total(client: str, spec_id: str) -> float:
     return float((load(client).get(spec_id) or {}).get("total") or 0)
+
+
+SESSIONS_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".tmp", "cucumber",
+                             "sessions_cout.json")
+
+
+def _sessions() -> dict:
+    try:
+        with open(SESSIONS_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def session_base(session_id: str):
+    """Cumul (USD) déjà dépensé par la session `session_id` ; None si inconnu (session antérieure au suivi)."""
+    value = _sessions().get(session_id or "") if session_id else 0.0
+    return None if value is None else float(value)
+
+
+def record_session(session_id: str, cumulative) -> None:
+    """Cumul de coût d'une session après un appel (total_cost_usd de Claude Code)."""
+    try:
+        cumulative = float(cumulative)
+    except (TypeError, ValueError):
+        return
+    if not session_id:
+        return
+    data = _sessions()
+    data[session_id] = round(cumulative, 6)
+    os.makedirs(os.path.dirname(SESSIONS_FILE), exist_ok=True)
+    with open(SESSIONS_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=1)
+
+
+def resumed_call_budget(budget: str, base) -> str:
+    """--max-budget-usd d'un appel qui reprend une session : cumul précédent + budget de l'appel. Cumul inconnu :
+    pas de budget passé à Claude (un budget sous le cumul arrêterait l'appel d'office), le plafond du lot reste
+    contrôlé par l'agent."""
+    if not budget or not base:
+        return "" if base is None else budget
+    return f"{float(base) + float(budget):.2f}"
+
+
+def call_cost(usage: dict, base) -> dict:
+    """Usage d'un appel ramené à son propre coût : cout_usd = cumul de la session − cumul précédent."""
+    if not usage or usage.get("cout_usd") in ("", None):
+        return usage
+    cumulative = float(usage["cout_usd"])
+    record_session(usage.get("session_id", ""), cumulative)
+    if base is None:
+        usage["cout_cumul_inconnu"] = True
+        return usage
+    usage["cout_session"] = cumulative
+    usage["cout_usd"] = round(max(0.0, cumulative - float(base)), 6)
+    return usage

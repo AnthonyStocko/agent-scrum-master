@@ -298,7 +298,7 @@ Dans l'onglet **⚙️ Configuration**, section « Connaissances partagées », 
 ```
 
 - `<projet>` : le client s'il est connu (déduit du dépôt client), sinon le projet Jira. Le projet Jira figure toujours dans l'en-tête.
-- `<type>`, liste fermée : `cadrage`, `besoin`, `decoupage-epopee`, `recap-patch`, `release-note`, `postmerge-cucumber`, `cucumber-inventaire`, `cucumber-sante`, `cucumber-couverture`, `cucumber-a-revoir`, `cucumber-diagnostic-run`, `cucumber-initialisation` (constats et mises de côté de l'initialisation), `cucumber-reponses` (réponses aux questions du profil), `audit`, `autre`.
+- `<type>`, liste fermée : `cadrage`, `besoin`, `decoupage-epopee`, `recap-patch`, `release-note`, `postmerge-cucumber`, `cucumber-inventaire`, `cucumber-sante`, `cucumber-couverture`, `cucumber-a-revoir`, `cucumber-diagnostic-run`, `cucumber-initialisation` (constats et mises de côté de l'initialisation), `cucumber-reponses` (réponses aux questions du profil), `cucumber-livraison` (bilan de la livraison autonome), `audit`, `autre`.
 - Noms nettoyés pour Windows (caractères interdits, noms réservés, points finaux), chemin complet borné à 240 caractères.
 - Un document n'est **jamais écrasé** : à nom identique, un suffixe `-2`, `-3`… est ajouté. L'écriture est atomique (fichier temporaire dans le même dossier, puis renommage) : un lecteur ne voit jamais un document à moitié écrit.
 

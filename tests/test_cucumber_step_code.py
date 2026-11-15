@@ -168,6 +168,9 @@ def test_followup_resumes_lot_session(main_module, monkeypatch, tmp_path):
         return 0, "{}", {"session_id": "s2"}, False
     monkeypatch.setattr(main_module, "run_cucumber_claude", fake)
     monkeypatch.delenv("CUCUMBER_RESUME_SESSION", raising=False)
+    from tools import cucumber_cost
+    for session in ("s1", "dead"):           # cumul de coût connu : la session est reprise
+        cucumber_cost.record_session(session, 1.0)
     lot = {"session": "s1", "modele": "opus", "effort": "high", "systeme": str(system)}
     out = main_module.cucumber_followup(lot, "p", "haiku", "low", ["Read"], "10", str(tmp_path), [], "revue")
     assert calls[-1] == ("opus", "high", str(system), "s1", "revue") and out[4:] == ("opus", "high")

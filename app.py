@@ -2478,6 +2478,8 @@ def render_simple_cucumber() -> None:
         if cucumber_copied_config.active(copied_profile):
             # Changement de version de l'application : copie de référence invalidée, nouvelle copie demandée
             cucumber_copied_config.invalidate_on_version_change(client, copied_profile)
+            # Base source changée depuis la copie (modèle de données, déploiements Studio) : invalidée aussi
+            cucumber_copied_config.check_source_version(client, copied_profile)
             copied_profile = cucumber_profile.effective_profile(cucumber_profile.load_profile(client))
             copied = {"actif": True, "probleme": cucumber_copied_config.reference_problem(copied_profile)}
     for step in cucumber_simple.states(project, records, copied):

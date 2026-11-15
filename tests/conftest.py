@@ -84,6 +84,12 @@ def _isolated_knowledge(tmp_path, monkeypatch):
     # Journaux des exécutions lancées par l'interface (AppTest) : jamais dans le vrai .tmp/logs ni le journal technique
     monkeypatch.setenv("AGENT_RUN_LOGS_DIR", str(tmp_path / "logs"))
     monkeypatch.setenv("AGENT_JOURNAL_PATH", str(tmp_path / "journal_technique.log"))
+    # Aucune requête réelle : sélection des données de test et contrôle de version de la base source désactivés
+    # (les tests qui en ont besoin passent leur propre requête) ; cumul de coût des sessions temporaire
+    monkeypatch.setenv("CUCUMBER_TEST_SELECTION", "0")
+    monkeypatch.setenv("CUCUMBER_SOURCE_VERSION_CHECK", "0")
+    from tools import cucumber_cost
+    monkeypatch.setattr(cucumber_cost, "SESSIONS_FILE", str(tmp_path / "sessions_cout.json"))
     monkeypatch.setattr(knowledge_tools, "OUTBOX_DIR", str(tmp_path / "knowledge_outbox"))
     monkeypatch.setattr(knowledge_tools, "INDEX_CACHE", str(tmp_path / "knowledge_index.json"))
     original = dotenv.load_dotenv
@@ -91,7 +97,8 @@ def _isolated_knowledge(tmp_path, monkeypatch):
     def guarded(*args, **kwargs):
         kept = {name: os.environ.get(name) for name in ("AGENT_KNOWLEDGE_DIR", "GROUNDCOVER_MCP_ENABLED",
                                                          "CUCUMBER_JOB_VALUES_CHECK", "AGENT_RUN_LOGS_DIR",
-                                                         "AGENT_JOURNAL_PATH")}
+                                                         "AGENT_JOURNAL_PATH", "CUCUMBER_TEST_SELECTION",
+                                                         "CUCUMBER_SOURCE_VERSION_CHECK")}
         try:
             return original(*args, **kwargs)
         finally:

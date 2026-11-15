@@ -555,6 +555,11 @@ class RunGuard:
                      "restauration": False, "schema_verifie": ""}
 
     def prepare(self) -> str:
+        changed = check_source_version(self.client, self.profile, force=True)
+        if changed:
+            self.log(f"[CONFIG COPIÉE] ⛔ Copie de référence invalidée : {changed}.")
+            from tools import cucumber_profile
+            self.profile = cucumber_profile.effective_profile(cucumber_profile.load_profile(self.client))
         problem = reference_problem(self.profile)
         if problem:
             # Version de l'application changée : référence invalidée (nouvelle copie demandée avant tout run)
@@ -673,7 +678,110 @@ def connections_lines(connections: list) -> list:
 
 
 def new_reference_entry(source: str, schema: str, version: str, dump: str, codes: dict, backup: str = "",
-                        connections: list = ()) -> dict:
+                        connections: list = (), versions: dict = None) -> dict:
     return {"date": datetime.now().isoformat(timespec="seconds"), "source": source, "schema": schema,
             "version": version, "dump": dump, "codes": codes, "sauvegarde": backup,
-            "branchements": list(connections or [])}
+            "branchements": list(connections or []), "versions_source": dict(versions or {})}
+
+
+# ---------------------------------------------------------------------------
+# Version réelle de la base copiée : modèle de données et déploiements Studio
+# ---------------------------------------------------------------------------
+
+# (libellé, table, colonne de date) : ce que l'application installe ou déploie dans la base à chaque version. La
+# version choisie dans le profil ne dit pas celle de la base copiée (copie du 13/11 étiquetée 1.5-SNAPSHOT alors que
+# la source a reçu des processus Studio après la copie) : ces tables, si.
+VERSION_TABLES = (
+    ("modèle de données", "kis_datamodel_version", "installed_date"),
+    ("processus Studio", "kis_custom_process_version", "created_date"),
+    ("écouteurs Studio", "kis_custom_listener_version", "created_date"),
+    ("événements Studio", "kis_custom_event_version", "created_date"),
+    ("règles métier", "kis_business_rule_version", "created_date"),
+)
+SOURCE_CHECK_TTL_S = 600
+_SOURCE_CHECKS = {}
+
+
+def version_signature(schema: str, query) -> dict:
+    """{libellé: "nombre|date la plus récente"} des tables de version ; table absente ou illisible : ignorée."""
+    out = {}
+    for label, table, column in VERSION_TABLES:
+        try:
+            rows = query(f"SELECT count(*) || '|' || coalesce(max({column})::text, '') AS code FROM {table}", schema)
+        except Exception:  # noqa: BLE001 - table absente dans cette version
+            continue
+        if rows and "|" in str(rows[0].get("code", "")):
+            out[label] = str(rows[0]["code"]).strip()
+    return out
+
+
+def _latest(value: str) -> str:
+    return str(value or "").partition("|")[2][:19].replace(" ", "T")
+
+
+def _shown(value: str) -> str:
+    count, _, latest = str(value or "").partition("|")
+    return f"{count} version(s)" + (f", dernière le {latest[:16]}" if latest else "")
+
+
+def version_gap(stored: dict, current: dict, reference_date: str) -> list:
+    """
+    Différences entre la base source actuelle et la copie de référence : empreinte enregistrée à la copie comparée à
+    l'actuelle ; référence sans empreinte (copie antérieure) : installation ou déploiement de la source postérieur à
+    la date de la copie.
+    """
+    gaps = []
+    for label, now in (current or {}).items():
+        if stored:
+            before = stored.get(label)
+            if before is not None and before != now:
+                gaps.append(f"{label} : {_shown(before)} à la copie → {_shown(now)} dans la source")
+        elif _latest(now) and reference_date and _latest(now) > reference_date[:19]:
+            gaps.append(f"{label} : dernier déploiement de la source le {_latest(now).replace('T', ' ')[:16]}, "
+                        f"après la copie du {reference_date[:16].replace('T', ' ')}")
+    return gaps
+
+
+def source_schema_of(ref: dict) -> str:
+    """Schéma source de la copie (champ « source » : « <connexion> / <schéma> »)."""
+    return str((ref or {}).get("source", "")).rpartition(" / ")[2].strip()
+
+
+def source_query(sql: str, schema: str) -> list:
+    """Requête de lecture dans la base SOURCE de la copie (CLIENT_SOURCE_DB_*) : lignes [{"code": ligne}]."""
+    from tools import db_restore
+    if not re.match(r"^[A-Za-z_][\w$]*$", schema or ""):
+        raise ValueError(f"schéma source invalide : {schema!r}")
+    result = db_restore._psql(db_restore.source_connection(), f'SET search_path TO "{schema}"; {sql};',
+                              lambda _m: None)
+    if result.returncode != 0:
+        raise RuntimeError((result.stderr or "").strip()[:200])
+    return [{"code": line} for line in (result.stdout or "").splitlines() if line.strip()]
+
+
+def check_source_version(client_name: str, profile: dict, query=None, force: bool = False) -> str:
+    """
+    La base source a-t-elle changé de version depuis la copie (modèle de données, déploiements Studio) ? Oui :
+    référence invalidée (étape 4 bloquée jusqu'à la nouvelle copie), raison renvoyée. Source illisible : '' (le
+    contrôle ne bloque pas sur une panne réseau). Résultat gardé SOURCE_CHECK_TTL_S secondes sauf `force`.
+    """
+    ref = reference(profile)
+    schema = source_schema_of(ref)
+    if not (active(profile) and ref and not ref.get("invalide") and schema):
+        return ""
+    if query is None and os.getenv("CUCUMBER_SOURCE_VERSION_CHECK", "1").strip() == "0":
+        return ""
+    key = (client_name, ref.get("date", ""))
+    cached = _SOURCE_CHECKS.get(key)
+    if cached and not force and time.time() - cached[0] < SOURCE_CHECK_TTL_S:
+        return cached[1]
+    try:
+        current = version_signature(schema, query or source_query)
+    except Exception:  # noqa: BLE001 - source injoignable
+        current = {}
+    gaps = version_gap(ref.get("versions_source") or {}, current, ref.get("date", ""))
+    reason = ("version de la base source changée depuis la copie (" + " ; ".join(gaps) + ")") if gaps else ""
+    if reason:
+        invalidate(client_name, reason)
+    _SOURCE_CHECKS[key] = (time.time(), reason)
+    return reason

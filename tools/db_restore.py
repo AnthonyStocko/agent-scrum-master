@@ -211,8 +211,11 @@ def restore_dump(conn: dict, dump: str, dump_schema_name: str, target_schema: st
     if created.returncode != 0:
         raise RestoreError(f"création du schéma impossible : {created.stderr.strip()[:300]}")
     started = datetime.now()
+    jobs = restore_jobs()
     restored = _run([tool("pg_restore"), *_conn_args(conn), f"--dbname={conn['name']}", "--no-owner",
-                     f"--schema={dump_schema_name}", "--format=c", "-L", listing_path, dump], conn, log)
+                     f"--schema={dump_schema_name}", "--format=c"] + ([f"--jobs={jobs}"] if jobs > 1 else [])
+                    + ["-L", listing_path, dump], conn, log)
+    restore_s = int((datetime.now() - started).total_seconds())
     if rename:
         renamed = _psql(conn, f'ALTER SCHEMA "{dump_schema_name}" RENAME TO "{target_schema}";', log)
         if renamed.returncode != 0:
@@ -228,11 +231,14 @@ def restore_dump(conn: dict, dump: str, dump_schema_name: str, target_schema: st
         raise IncompleteRestore(f"copie incomplète ({counted} dans {target_schema} ; pg_restore code "
                                 f"{restored.returncode}, {warnings} erreur(s)) : "
                                 f"{(restored.stderr or '').strip()[-200:]}")
+    analyze_started = datetime.now()
     log("ANALYZE des tables du schéma " + target_schema)
     _psql(conn, "DO $$ DECLARE r RECORD; BEGIN FOR r IN SELECT table_schema, table_name FROM "
                 f"information_schema.tables WHERE table_schema = '{target_schema}' AND table_type = 'BASE TABLE' "
                 "LOOP EXECUTE 'ANALYZE ' || quote_ident(r.table_schema) || '.' || quote_ident(r.table_name); "
                 "END LOOP; END $$;", log)
+    analyze_s = int((datetime.now() - analyze_started).total_seconds())
+    log(f"Durées : pg_restore {restore_s} s ({jobs} processus), ANALYZE {analyze_s} s")
     post = ""
     if post_sql and os.path.exists(post_sql):
         with open(post_sql, encoding="utf-8-sig") as f:
@@ -242,7 +248,16 @@ def restore_dump(conn: dict, dump: str, dump_schema_name: str, target_schema: st
         post = "script après import passé" if result.returncode == 0 else "script après import en échec"
         log(post)
     return {"exclus": excluded, "erreurs_restauration": warnings, "apres_import": post,
-            "duree_s": int((datetime.now() - started).total_seconds())}
+            "duree_s": int((datetime.now() - started).total_seconds()),
+            "durees": {"pg_restore": restore_s, "analyze": analyze_s, "processus": jobs}}
+
+
+def restore_jobs() -> int:
+    """RESTORE_JOBS (défaut 4) : processus parallèles de pg_restore (format custom) ; 1 = séquentiel."""
+    try:
+        return max(1, int(os.getenv("RESTORE_JOBS", "").strip() or 4))
+    except ValueError:
+        return 4
 
 
 def history_path(client_name: str) -> str:

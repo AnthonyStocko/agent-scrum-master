@@ -209,14 +209,68 @@ def parse_remaining(fix: dict) -> list:
             entry = {"tag": _flat(raw.get("tag"), 80), "nature": nature if nature in REMAINING_NATURES else "a_verifier",
                      "cause": _flat(raw.get("cause")), "preuve": _flat(raw.get("preuve")),
                      "reactivation": _flat(raw.get("reactivation"), 300),
+                     "correction_a_faire": _flat(raw.get("correction_a_faire"), 600),
                      "valeur": {k: _flat(value.get(k), 300) for k in ("step", "avant", "apres") if value.get(k)}}
         else:
             text = _flat(raw)
             found = _AGENT_TAG.search(text)
             entry = {"tag": found.group(0) if found else "", "nature": "a_verifier", "cause": text, "preuve": "",
-                     "reactivation": "", "valeur": {}}
+                     "reactivation": "", "correction_a_faire": "", "valeur": {}}
         if entry["cause"] or entry["preuve"]:
             out.append(entry)
+    return out
+
+
+# Correction connue mais pas faite, écrite en clair dans la cause (« Correction à faire : … Je ne l'ai pas faite »)
+_PENDING_TEXT = re.compile(r"correction à faire\s*:\s*(.+?)(?:\.\s*je ne l'ai pas faite|$)", re.I | re.S)
+
+
+def pending_corrections(fix: dict, tags: set = None) -> list:
+    """
+    Corrections identifiées mais non appliquées d'une réponse : [{tag, correction, preuve, cause}] (champ
+    « correction_a_faire » des restantes, à défaut « Correction à faire : … » écrit dans la cause). Hors test
+    prouvé : jamais (rien à corriger dans le test).
+    """
+    out = []
+    for entry in parse_remaining(fix):
+        if entry["nature"] == "hors_test_prouvee" or (tags is not None and entry["tag"] not in tags):
+            continue
+        correction = entry.get("correction_a_faire", "")
+        if not correction:
+            found = _PENDING_TEXT.search(entry["cause"])
+            correction = found.group(1).strip() if found else ""
+        if correction:
+            out.append({"tag": entry["tag"], "correction": correction, "preuve": entry["preuve"],
+                        "cause": entry["cause"]})
+    return out
+
+
+def apply_pending_prompt(pending: list) -> str:
+    """Prompt de l'appel court qui applique les corrections identifiées, avec la preuve déjà obtenue."""
+    lines = ["APPLIQUE MAINTENANT les corrections que tu as identifiées à l'appel précédent. La preuve est DÉJÀ "
+             "obtenue : aucune nouvelle requête de preuve (base, logs) sauf pour lire une valeur indispensable à la "
+             "correction elle-même. Les attendus (Then) ne changent pas. Vérifie la compilation si l'outil est "
+             "disponible, puis réponds avec le MÊME format JSON que l'appel précédent (« corrections » décrit ce "
+             "que tu as changé, « cause_prouvee » repris de la preuve ci-dessous)."]
+    for item in pending:
+        lines.append(f"- {item['tag']} : {item['correction']}"
+                     + (f" — preuve : « {item['preuve'][:400]} »" if item.get("preuve") else "")
+                     + (f" — cause : {item['cause'][:400]}" if item.get("cause") else ""))
+    return "\n".join(lines)
+
+
+def merge_applied(fix: dict, applied: dict) -> dict:
+    """Réponse de correction complétée par celle de l'appel court : corrections ajoutées, restantes remplacées
+    pour les scénarios corrigés."""
+    out = dict(fix or {})
+    corrections = [c for c in applied.get("corrections") or [] if isinstance(c, dict)]
+    fixed = {str(c.get("tag", "")).strip() for c in corrections}
+    out["corrections"] = list(out.get("corrections") or []) + corrections
+    out["corrigees"] = int(out.get("corrigees") or 0) + int(applied.get("corrigees") or len(corrections) or 0)
+    kept = [r for r in out.get("restantes") or [] if not (isinstance(r, dict) and str(r.get("tag", "")).strip() in fixed)]
+    out["restantes"] = kept + list(applied.get("restantes") or [])
+    for key in ("preuves_base", "constats", "realignes", "competences_utilisees"):
+        out[key] = list(out.get(key) or []) + list(applied.get(key) or [])
     return out
 
 

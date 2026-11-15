@@ -103,6 +103,30 @@ def _console_durations(scenarios: dict, began: list, raw: list) -> None:
             scenarios[key]["duree"] = round(scenarios[key].get("duree", 0) + (following - stamp).total_seconds(), 1)
 
 
+def _console_failure_time(raw: list, lines: list, line_of: dict, key, step: str, timing: dict) -> str:
+    """
+    Heure (UTC) du step en échec lue dans une console horodatée, quand le rapport Cucumber n'a pas de start_timestamp :
+    ligne du step dans le bloc du scénario (sortie lisible de Cucumber), à défaut fin du scénario (début + durée), à
+    défaut son début. '' sans horodatage.
+    """
+    start = line_of.get(key)
+    if start is not None and step:
+        following = sorted(n for n in line_of.values() if n > start)
+        end = following[0] if following else len(lines)
+        wanted = " ".join(step.split())
+        for number in range(start, end):
+            text = " ".join(lines[number].split())
+            if wanted and wanted in text and "✽." not in text and not text.startswith("at "):
+                stamp = _console_stamp(raw[number])
+                if stamp:
+                    return stamp.isoformat(timespec="seconds")
+    began = _timestamp(timing.get("debut", "")) if timing.get("debut") else None
+    if began and timing.get("duree"):
+        from datetime import timedelta
+        return (began + timedelta(seconds=float(timing["duree"]))).isoformat(timespec="seconds")
+    return began.isoformat(timespec="seconds") if began else ""
+
+
 def console_results(text: str) -> dict:
     """
     Résultats lus dans la console Jenkins quand le rapport Cucumber JSON manque : scénarios de la sortie lisible de
@@ -115,7 +139,7 @@ def console_results(text: str) -> dict:
     """
     raw = text.replace("\r", "").splitlines()
     lines = [_unstamped(line) for line in raw]
-    scenarios, starts, began = {}, {}, []
+    scenarios, starts, began, line_of = {}, {}, [], {}
     for number, line in enumerate(lines):
         match = _PRETTY_SCENARIO.match(line)
         if match:
@@ -123,6 +147,7 @@ def console_results(text: str) -> dict:
             scenarios.setdefault(key, {"statut": "passe", "step": "", "phase": "", "message": ""})
             starts.setdefault(match.group(2), []).append((int(match.group(3)), key))
             stamp = _console_stamp(raw[number])
+            line_of.setdefault(key, number)
             if stamp:
                 began.append((stamp, key))
     _console_durations(scenarios, began, raw)
@@ -157,7 +182,9 @@ def console_results(text: str) -> dict:
         timing = {k: v for k, v in (scenarios.get(key) or {}).items() if k in ("debut", "duree")}
         scenarios[key] = {"statut": "echoue", "step": step_match.group(1) if step_match else "", "phase": "",
                           "message": " ".join(message.split())[:300], "nature": nature, "exception": exception,
-                          "heure": "", "erreur": error, **timing}
+                          "heure": _console_failure_time(raw, lines, line_of, key,
+                                                         step_match.group(1) if step_match else "", timing),
+                          "erreur": error, **timing}
     if not any(r["statut"] == "echoue" for r in scenarios.values()):
         scenarios.update(compile_failures(lines))
     return scenarios if any(r["statut"] == "echoue" for r in scenarios.values()) or scenarios else {}
@@ -824,6 +851,12 @@ def analyse(client_name: str, numero: int, state: dict, worktree: str = "") -> d
         out["non_analyse"] = _count_gap(report, facts, worktree, state)
     if not out["non_analyse"]:
         parsed = parse_cucumber_report(report) if report else from_console
+        if report and console and any(r.get("statut") == "echoue" and not r.get("heure") for r in parsed.values()):
+            # Rapport sans start_timestamp : heure de l'échec lue dans la console horodatée (logs serveur lus aussi)
+            timed = console_results(console)
+            for key, r in parsed.items():
+                if r.get("statut") == "echoue" and not r.get("heure") and (timed.get(key) or {}).get("heure"):
+                    r["heure"], r["heure_source"] = timed[key]["heure"], "console"
         results = {scenario_id(_rel(rel), title): {k: v for k, v in r.items() if k not in ("journal", "sorties")}
                    for (rel, title), r in parsed.items()}
         if not report:

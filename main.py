@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 
 from tools import env_tools, secret_tools, cucumber_cost, cucumber_lessons
 from tools import cucumber_env_diagnosis, cucumber_copied_config
-from tools import bitbucket_std, client_version, cucumber_a_revoir, cucumber_arbitrage, cucumber_compile, cucumber_db_proof, cucumber_fix_budget, cucumber_stray, cucumber_incidents, cucumber_init_fix, cucumber_isolation, cucumber_lock, cucumber_routes, cucumber_test_data, cucumber_jobs, cucumber_modules, cucumber_delivery, cucumber_library, cucumber_library_upgrade, standard_version, cucumber_bilan, cucumber_checks, cucumber_coverage, cucumber_data_rules, cucumber_disabled, cucumber_guard, cucumber_job, cucumber_decisions, cucumber_detection, cucumber_diagnostic, cucumber_failures, cucumber_environment, cucumber_rules, cucumber_run, cucumber_testability, cucumber_preflight, cucumber_results, cucumber_links, cucumber_server_logs, groundcover_tools, mcp_servers, cucumber_import, cucumber_init, cucumber_recreation, cucumber_init_data, cucumber_initializers, cucumber_profile, cucumber_tools, cucumber_verify, cucumber_versions, cucumber_wait_steps, db_tools, integration_tools, knowledge_tools, pr_review, assistant, db_restore, jenkins_tools, skills
+from tools import bitbucket_std, client_version, cucumber_a_revoir, cucumber_arbitrage, cucumber_compile, cucumber_db_proof, cucumber_fix_budget, cucumber_stray, cucumber_incidents, cucumber_init_fix, cucumber_isolation, cucumber_lock, cucumber_routes, cucumber_test_data, cucumber_test_selection, cucumber_jobs, cucumber_modules, cucumber_delivery, cucumber_library, cucumber_library_upgrade, standard_version, cucumber_bilan, cucumber_checks, cucumber_coverage, cucumber_data_rules, cucumber_disabled, cucumber_guard, cucumber_job, cucumber_decisions, cucumber_detection, cucumber_diagnostic, cucumber_failures, cucumber_environment, cucumber_rules, cucumber_run, cucumber_testability, cucumber_preflight, cucumber_results, cucumber_links, cucumber_server_logs, groundcover_tools, mcp_servers, cucumber_import, cucumber_init, cucumber_recreation, cucumber_init_data, cucumber_initializers, cucumber_profile, cucumber_tools, cucumber_verify, cucumber_versions, cucumber_wait_steps, db_tools, integration_tools, knowledge_tools, pr_review, assistant, db_restore, jenkins_tools, skills
 from tools.jira_cli import attach_files, create_or_get_issue
 from tools.epic_tools import (
     _restore_keys as restore_epic_keys, draft_tasks, epic_manifest_path, load_epic_manifest, save_epic_manifest,
@@ -732,9 +732,12 @@ def run_restore_config(client: str, source_schema: str, target_schema: str, back
             connections = cucumber_copied_config.external_connections(target_schema, cucumber_copied_config.copy_query)
             for line in cucumber_copied_config.connections_lines(connections):
                 print(f"[CONFIG CLIENT] ⚠️ Branchement externe de la copie : {line}")
+            # Version réelle de la base copiée (modèle de données, déploiements Studio) : comparée à la source avant
+            # chaque run, la référence est invalidée si la source a changé
+            versions = cucumber_copied_config.version_signature(target_schema, cucumber_copied_config.copy_query)
             reference = cucumber_copied_config.record_reference(client, cucumber_copied_config.new_reference_entry(
                 entry["source"], target_schema, cucumber_copied_config.app_version(profile), entry["reference"],
-                codes, entry.get("sauvegarde", ""), connections))
+                codes, entry.get("sauvegarde", ""), connections, versions))
             print(f"[CONFIG CLIENT] Copie de référence : {reference['dump']} (version "
                   f"{reference['version'] or 'non déterminée'}) ; "
                   + ", ".join(f"{k} {v.get('total', 0)}" for k, v in codes.items()) + ".")
@@ -2182,11 +2185,15 @@ def _run_cucumber_claude_once(prompt: str, model: str, allowed_tools: list, max_
             os.remove(journal)
         os.environ["AGENT_DB_LOG"] = journal
     started = time.time() - 1
+    # Session reprise : Claude Code renvoie le coût cumulé de la session et lui applique --max-budget-usd
+    base = cucumber_cost.session_base(resume) if resume else 0.0
+    budget = cucumber_cost.call_budget(CURRENT_LOT["lot"], cucumber_budget())
     try:
-        return run_claude(prompt, model, [cucumber_tools.STD_CACHE_DIR], allowed_tools, extra_args=extra,
-                          cwd=run_dir, effort=effort, lean=lean_session(),
-                          budget_usd=cucumber_cost.call_budget(CURRENT_LOT["lot"], cucumber_budget()),
-                          **mcp_kwargs(mcp_step))
+        returncode, output, usage, limit_hit = run_claude(
+            prompt, model, [cucumber_tools.STD_CACHE_DIR], allowed_tools, extra_args=extra, cwd=run_dir,
+            effort=effort, lean=lean_session(),
+            budget_usd=cucumber_cost.resumed_call_budget(budget, base) if resume else budget, **mcp_kwargs(mcp_step))
+        return returncode, output, cucumber_cost.call_cost(usage, base), limit_hit
     finally:
         # Fichiers de test écrits hors du dépôt <client>-cucumber (dossier parasite) : rapatriés dans le worktree
         for source, target in cucumber_stray.relocate(run_dir, os.path.join(run_dir, "worktree"), started):
@@ -2240,6 +2247,41 @@ def db_summary(entries: list) -> str:
             + (f", {errors} en erreur" if errors else ""))
 
 
+def init_fingerprint(worktree: str, profile: dict) -> str:
+    """Empreinte de l'initialisation : contenu des features d'init, référence copiée et version de l'application."""
+    import hashlib
+    digest = hashlib.sha256()
+    for rel in sorted(profile.get("init_features_tous") or profile.get("init_features") or []):
+        digest.update(rel.encode("utf-8"))
+        digest.update(_read_text(os.path.join(worktree, rel)).encode("utf-8"))
+    reference = cucumber_copied_config.reference(profile) if cucumber_copied_config.active(profile) else {}
+    digest.update(f"{reference.get('dump', '')}|{reference.get('date', '')}|"
+                  f"{cucumber_copied_config.app_version(profile)}".encode("utf-8"))
+    return digest.hexdigest()[:16]
+
+
+def test_selection_block(client: str, worktree: str, files: list = ()) -> str:
+    """
+    Bloc « DONNÉES DE TEST CHOISIES » (cucumber_test_selection, 0 token) : lu dans le schéma des tests (copie
+    restaurée en configuration copiée, CUCUMBER_DB_SCHEMA sinon). Sans schéma ou base illisible : ''.
+    CUCUMBER_TEST_SELECTION=0 : désactivé.
+    """
+    if os.getenv("CUCUMBER_TEST_SELECTION", "1").strip() == "0":
+        return ""
+    profile = cucumber_profile.effective_profile(cucumber_profile.load_profile(client))
+    copied = cucumber_copied_config.active(profile)
+    schema = (cucumber_copied_config.test_schema(profile) if copied else "") or os.getenv("CUCUMBER_DB_SCHEMA", "")
+    if not schema.strip():
+        return ""
+    selection = cucumber_test_selection.select(schema.strip(), cucumber_copied_config.copy_query, worktree,
+                                               list(files or []))
+    if selection.get("reserves"):
+        print(f"[DONNÉES DE TEST] Choisies sans IA dans {schema.strip()} : réserves vides "
+              f"{', '.join(r['code'] for r in selection['reserves'][:3])}… (secteur {selection['secteur'] or '?'})"
+              + (f", préfixe GS1 {selection['gs1']}" if selection.get("gs1") else ""))
+    return cucumber_test_selection.prompt_block(selection, copied)
+
+
 def resume_lot_session() -> bool:
     """CUCUMBER_RESUME_SESSION (défaut 1) : revue et corrections reprennent la session Claude du lot (--resume)."""
     return os.getenv("CUCUMBER_RESUME_SESSION", "1").strip() != "0"
@@ -2255,6 +2297,12 @@ def cucumber_followup(lot: dict, prompt: str, model: str, effort: str, tools: li
     Renvoie (code retour, sortie, usage, quota atteint, modèle, effort).
     """
     session = (lot or {}).get("session", "") if resume_lot_session() else ""
+    if session and cucumber_cost.session_base(session) is None:
+        # Cumul de coût de la session inconnu (session antérieure au suivi) : sa reprise fausserait le coût et le
+        # budget (Claude Code compte le cumul de la session) → appel neuf
+        print("[CUCUMBER] Session du lot sans cumul de coût connu : appel neuf au lieu de la reprise.")
+        lot.pop("session", None)
+        session = ""
     if session:
         lot_model, lot_effort = lot.get("modele") or model, lot.get("effort", effort)
         system_file = lot.get("systeme", "")
@@ -2704,7 +2752,7 @@ def verify_execution_lot(lot: dict, lot_specs: list, label: str, worktree: str, 
         gc_block = build_mcp_logs_block("cucumber-verify-fix", client, [
             {"id": v["id"], "step": v.get("step", ""), "heure": v.get("heure", "")} for v in bad.values()],
             build=next((v.get("build") for v in bad.values() if v.get("build")), ""))
-        prompt = render_prompt("cucumber_client_fix", **{"logs_block": "", "donnees_test": cucumber_test_data.prompt_block(), "regle_spec_code": cucumber_decisions.spec_code_rule(), "regle_donnees": cucumber_decisions.data_change_rule(), "competences": skills.prompt_block("cucumber-correction", "\n".join(lines)), **values, "logs_block": values.get("logs_block", "") + gc_block}, lot_label=label, etape="VÉRIFICATION PAR EXÉCUTION",
+        prompt = render_prompt("cucumber_client_fix", **{"logs_block": "", "donnees_test": cucumber_test_data.prompt_block(), "regle_spec_code": cucumber_decisions.spec_code_rule(), "regle_donnees": cucumber_decisions.data_change_rule(), "competences": skills.prompt_block("cucumber-correction", "\n".join(lines)), **values, "logs_block": values.get("logs_block", "") + gc_block, "donnees_test": values.get("donnees_test", cucumber_test_data.prompt_block()) + test_selection_block(client, worktree, files)}, lot_label=label, etape="VÉRIFICATION PAR EXÉCUTION",
                                erreurs="\n".join(lines) + cucumber_incidents.context_block(
                                    client, [{"step": v.get("step", ""), "message": v.get("motif", "")}
                                             for v in bad.values()]),
@@ -2726,6 +2774,26 @@ def verify_execution_lot(lot: dict, lot_specs: list, label: str, worktree: str, 
         last_run_read = True
         # D8 : déploiement retenu seulement si l'extrait cité par l'agent est dans le journal de l'exécution
         fix_result = cucumber_diagnostic.parse_fix_result(output)
+        # Correction identifiée mais non appliquée (tours épuisés) : un appel court l'applique avec la preuve obtenue
+        pending = cucumber_diagnostic.pending_corrections(fix_result, set(bad))
+        if pending and tests_fingerprint(worktree) == fingerprint and not cucumber_cost.over_budget(lot, label):
+            print(f"[LOT {label}] 🔧 Correction identifiée mais non appliquée ({len(pending)}) : appel court pour "
+                  f"l'appliquer avec la preuve déjà obtenue.")
+            apply_prompt = cucumber_diagnostic.apply_pending_prompt(pending)
+            session = (usage or {}).get("session_id", "")
+            returncode, more_output, more, limit_hit = run_cucumber_claude(
+                apply_prompt, used_model, lot_tools(values), str(_env_int("CUCUMBER_APPLY_MAX_TURNS", 6)), run_dir,
+                effort, db_log=lot.setdefault("base", []), db_step="application de la correction identifiée",
+                resume=session)
+            report_token_usage(work_key, "cucumber-verify-apply", used_model, more, len(apply_prompt), returncode,
+                               effort)
+            on_usage(more)
+            if limit_hit:
+                quota_hit = True
+                break
+            applied = cucumber_diagnostic.parse_fix_result(more_output)
+            if applied:
+                fix_result = cucumber_diagnostic.merge_applied(fix_result, applied)
         described += [c for c in fix_result.get("corrections") or [] if isinstance(c, dict)]
         skills.record_use(fix_result.get("competences_utilisees") or [])
         new_causes = cucumber_fix_budget.proven_causes(fix_result)
@@ -3092,6 +3160,11 @@ def check_cucumber_lot(client: str, label: str, worktree: str, base: str, cucumb
     errors += cucumber_isolation.check_files(client, worktree, files, own_profile, cucumber_std_dir)
     # Configuration copiée : aucune donnée métier de la copie (OP, UP, produit…) reprise, le test crée les siennes
     errors += cucumber_copied_config.check_business_data(worktree, files, own_profile)
+    # Configuration copiée : jamais de stock sur une réserve occupée dans la copie (mélange de produits refusé)
+    if cucumber_copied_config.active(own_profile) and cucumber_copied_config.test_schema(own_profile):
+        errors += cucumber_test_selection.occupied_reserves(
+            worktree, files, cucumber_copied_config.test_schema(own_profile),
+            cucumber_copied_config.reference(own_profile).get("date", ""), cucumber_copied_config.copy_query)
     # Leçons du client : contrôles déterministes (0 token)
     errors += cucumber_lessons.check_files(worktree, files, cucumber_lessons.load(client))
     # Un test vérifié vert n'est jamais réécrit (empreinte figée à sa vérification)
@@ -6239,6 +6312,8 @@ def run_simple_init(client: str, client_root: str, cucumber_std_dir: str, std_ro
     copied = cucumber_copied_config.active(profile)
     if copied:
         # Configuration copiée : aucune purge ni clear ; la copie de référence doit être valide avant tout run
+        if cucumber_copied_config.check_source_version(client, profile, force=True):
+            profile = cucumber_profile.effective_profile(cucumber_profile.load_profile(client))
         problem = cucumber_copied_config.reference_problem(profile)
         if problem:
             simple_record(client, "init", "echec", f"Configuration copiée : {problem}.", detail)
@@ -7244,7 +7319,14 @@ def run_cucumber_client(args, work_key: str, local_client_repo: str, local_std_r
                     else "")
     if branch_error:
         print(f"[CUCUMBER] ⛔ Initialisation non vérifiée : {branch_error}")
-    if verify_mode and init_tags and cucumber_tools.pending_lots(state) and not branch_error:
+    # Init déjà vérifiée verte avec les mêmes fichiers d'init et la même référence : pas de build (ni de restauration)
+    # séparé, l'init est rejouée en tête du build de chaque lot (lot non jugé si elle échoue)
+    init_print = init_fingerprint(worktree, profile)
+    if (verify_mode and init_tags and cucumber_tools.pending_lots(state) and not branch_error
+            and (state.get("init") or {}).get("ok") and (state.get("init") or {}).get("empreinte") == init_print):
+        print(f"[CUCUMBER] ✅ Initialisation déjà vérifiée ({state['init'].get('build', '')}) avec les mêmes fichiers "
+              f"et la même référence : pas de build séparé, elle est rejouée dans le build de chaque lot.")
+    elif verify_mode and init_tags and cucumber_tools.pending_lots(state) and not branch_error:
         init_base, init_sources = state["base"], verify_sources
         if profile["verify_branch"]:
             init_base = cucumber_tools.rev_parse(worktree, "HEAD")
@@ -7263,7 +7345,7 @@ def run_cucumber_client(args, work_key: str, local_client_repo: str, local_std_r
                                 local_cucumber_std_repo, std_java, step_code, token_saving_rules, python_exe,
                                 workspace_dir, work_key)
         # Dernier résultat connu de l'init (parcours de l'onglet, étape Projet)
-        state["init"] = {**init, "date": datetime.now().isoformat(timespec="seconds")}
+        state["init"] = {**init, "date": datetime.now().isoformat(timespec="seconds"), "empreinte": init_print}
         cucumber_tools.save_state(client, state)
         if not init["ok"]:
             verify_mode, verify_message, unverified_status = "", init["message"], "environnement"
@@ -7273,7 +7355,8 @@ def run_cucumber_client(args, work_key: str, local_client_repo: str, local_std_r
         "client_name": client, "token_saving_rules": token_saving_rules,
         # Adresse de livraison de test (profil, sinon défaut de l'agent) et données de référentiel jamais inventées :
         # prompt système des lots et prompts de correction
-        "donnees_test": cucumber_test_data.prompt_block(profile) + cucumber_lessons.prompt_block(client),
+        "donnees_test": cucumber_test_data.prompt_block(profile) + cucumber_lessons.prompt_block(client)
+        + test_selection_block(client, worktree),
         "knowledge_block": f"\n{shared['bloc']}\n" if shared["bloc"] else "",
         # Accès base en lecture seule de tous les lots et de leurs corrections (--db-schema), journalisé par lot
         # Base de l'environnement où Jenkins joue les tests (CUCUMBER_DB_*), à défaut la base DB_*
