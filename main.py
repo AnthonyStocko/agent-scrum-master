@@ -23,7 +23,7 @@ from tools import bitbucket_std, client_version, cucumber_a_revoir, cucumber_arb
 from tools.jira_cli import attach_files, create_or_get_issue
 from tools.epic_tools import (
     _restore_keys as restore_epic_keys, draft_tasks, epic_manifest_path, load_epic_manifest, save_epic_manifest,
-    sync_epic_tasks,
+    sync_epic_tasks, attach_existing_analyses, missing_analyses,
 )
 from tools import (analysis_publication, cucumber_java21, cucumber_repo_setup, cucumber_simple, cucumber_simple_init,
                    jira_guard)
@@ -8033,7 +8033,14 @@ def finalize_epic_draft(epic_key: str, previous_manifest: dict) -> bool:
         return False
     # Clés des tâches déjà créées, si l'agent les a perdues en réécrivant le manifeste
     restore_epic_keys(manifest, previous_manifest or {})
+    attached = attach_existing_analyses(manifest)
     save_epic_manifest(epic_key, manifest)
+    if attached:
+        print(f"[ÉPOPÉE] Analyse rattachée à une tâche existante, écrite dans son fichier local : "
+              f"{', '.join(f'{k}-cadrage.md' for k in attached)} (brouillon, publiée à la validation).")
+    for task in missing_analyses(manifest):
+        print(f"[ÉPOPÉE] ❌ {task.get('key') or task.get('summary')} : analyse absente (fichier "
+              f"'{task.get('file')}' vide ou manquant) — générer ou réviser le découpage.")
     drafts = draft_tasks(manifest)
     created = [t for t in manifest["tasks"] if t.get("key")]
     print(f"[ÉPOPÉE] Découpage de {epic_key} en brouillon : {len(manifest['tasks'])} tâche(s)"

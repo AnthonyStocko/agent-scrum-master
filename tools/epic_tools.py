@@ -143,6 +143,45 @@ def draft_tasks(manifest: dict) -> list:
     return [t for t in manifest.get("tasks", []) if not t.get("key")]
 
 
+def task_analysis(task: dict) -> tuple:
+    """
+    (fichier, texte) de l'analyse d'une tâche : '<CLÉ>-cadrage.md' s'il n'est pas vide, sinon le fichier du manifeste
+    (analyse rattachée à une tâche existante et pas encore recopiée) ; ('<fichier attendu>', '') si aucune analyse.
+    """
+    candidates = [p for p in ((f"{task['key']}-cadrage.md" if task.get("key") else ""), task.get("file") or "") if p]
+    for path in candidates:
+        text = _read(path)
+        if text.strip():
+            return path, text
+    return (candidates[0] if candidates else ""), ""
+
+
 def task_file(task: dict) -> str:
-    """Fichier d'analyse d'une tâche : '<CLÉ>-cadrage.md' une fois créée, sinon celui du manifeste."""
-    return f"{task['key']}-cadrage.md" if task.get("key") else (task.get("file") or "")
+    """Fichier d'analyse d'une tâche (cf. task_analysis)."""
+    return task_analysis(task)[0]
+
+
+def missing_analyses(manifest: dict) -> list:
+    """Tâches du découpage sans analyse (fichier absent ou vide)."""
+    return [t for t in manifest.get("tasks", []) if not task_analysis(t)[1].strip()]
+
+
+def attach_existing_analyses(manifest: dict) -> list:
+    """
+    Découpage qui rattache une analyse à une tâche EXISTANTE (clé déjà connue) : l'analyse est écrite dans le
+    fichier local de la tâche ('<CLÉ>-cadrage.md', brouillon tant que le découpage n'est pas validé) et le manifeste
+    pointe sur lui. Une analyse vide n'écrase jamais un fichier. Renvoie les clés concernées.
+    """
+    attached = []
+    for task in manifest.get("tasks", []):
+        key = task.get("key")
+        target = f"{key}-cadrage.md" if key else ""
+        if not key or not task.get("file") or task["file"] == target:
+            continue
+        text = _read(task["file"])
+        if not text.strip():
+            continue
+        analysis_publication.save_draft(key, text)
+        task["file"] = target
+        attached.append(key)
+    return attached

@@ -456,9 +456,12 @@ def epic_summary(task_texts: list, project: str) -> str:
     config = settings(project)
     rows, grand = [], {"basse": 0.0, "probable": 0.0, "haute": 0.0}
     for title, text in task_texts:
+        if not (text or "").strip():
+            rows.append(f"| {title} | analyse manquante | analyse manquante | analyse manquante |")
+            continue
         parsed = parse(text)
         if not parsed["lignes"]:
-            rows.append(f"| {title} | ? | ? | ? |")
+            rows.append(f"| {title} | chiffrage absent | chiffrage absent | chiffrage absent |")
             continue
         sums = totals(parsed)
         for key in grand:

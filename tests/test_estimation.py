@@ -114,7 +114,24 @@ def test_actual_time_after_delivery_is_compared_and_remembered():
 
 def test_epic_estimate_per_child_task_and_total():
     text = estimation.normalize(ANALYSIS)[0]
-    summary = estimation.epic_summary([("PRJ-13 — tâche 1", text), ("Tâche 2", text), ("Tâche 3", "sans chiffrage")],
-                                      "PRJ")
-    assert "| PRJ-13 — tâche 1 | 2 | 3 | 5,5 |" in summary and "| Tâche 3 | ? | ? | ? |" in summary
+    summary = estimation.epic_summary([("PRJ-13 — tâche 1", text), ("Tâche 2", text), ("Tâche 3", "sans chiffrage"),
+                                       ("PRJ-14", "")], "PRJ")
+    assert "| PRJ-13 — tâche 1 | 2 | 3 | 5,5 |" in summary and "| Tâche 3 | chiffrage absent |" in summary
+    assert "| PRJ-14 | analyse manquante | analyse manquante | analyse manquante |" in summary
     assert "| **Total** | **4** | **6** | **11** |" in summary
+
+
+def test_analysis_attached_to_an_existing_task_is_written_to_its_own_file_and_never_empty():
+    from tools import epic_tools
+    with open("EPIC-1-tache-1.md", "w", encoding="utf-8") as f:
+        f.write(ANALYSIS)
+    open("PRJ-12-cadrage.md", "w", encoding="utf-8").close()        # fichier vide laissé par l'écran
+    manifest = {"epic": "EPIC-1", "tasks": [{"summary": "s", "file": "EPIC-1-tache-1.md", "key": "PRJ-12"},
+                                            {"summary": "t", "file": "EPIC-1-tache-2.md", "key": ""}]}
+    # Avant rattachement : le fichier vide de la tâche n'est pas pris pour son analyse
+    assert epic_tools.task_analysis(manifest["tasks"][0]) == ("EPIC-1-tache-1.md", ANALYSIS)
+    assert epic_tools.attach_existing_analyses(manifest) == ["PRJ-12"]
+    assert manifest["tasks"][0]["file"] == "PRJ-12-cadrage.md"
+    assert epic_tools.task_analysis(manifest["tasks"][0]) == ("PRJ-12-cadrage.md", ANALYSIS)
+    # Tâche sans analyse : signalée (boutons de validation bloqués dans l'écran)
+    assert [t["file"] for t in epic_tools.missing_analyses(manifest)] == ["EPIC-1-tache-2.md"]

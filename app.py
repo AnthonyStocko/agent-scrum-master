@@ -22,7 +22,7 @@ from tools import (cucumber_a_revoir, cucumber_java21, cucumber_simple, cucumber
                    cucumber_links, cucumber_results, cucumber_studio, cucumber_testability, cucumber_tools,
                    cucumber_verify, integration_tools, jenkins_tools, knowledge_tools)
 from tools import analysis_publication
-from tools.epic_tools import draft_tasks, load_epic_manifest, task_file
+from tools.epic_tools import draft_tasks, load_epic_manifest, missing_analyses, task_analysis, task_file
 from tools.jira_tools import (
     JiraSearchError, fetch_tickets_data, fetch_tickets_with_epic_context, get_jira_issue_summary, std_only_projects,
 )
@@ -262,13 +262,9 @@ def show_epic_estimation(tasks: list, project: str) -> None:
         return
     texts = []
     for index, task in enumerate(tasks, 1):
-        path = task_file(task)
-        text = ""
-        if path and os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
-                text = f.read()
+        text = task_analysis(task)[1]
         texts.append((f"{task.get('key') or f'Tâche {index}'} — {task.get('summary', '')}", text))
-    missing = [title for title, text in texts if not estimation.parse(text)["lignes"]]
+    missing = [title for title, text in texts if text.strip() and not estimation.parse(text)["lignes"]]
     st.markdown(estimation.epic_summary(texts, project))
     if missing:
         st.caption("Sans chiffrage : " + ", ".join(missing) + " — demandez une révision (ex. « Ajoute le chiffrage de "
@@ -914,14 +910,18 @@ if PAGE == "lancement":
                         f"tâche(s) pas encore créées dans Jira.]")
 
         task_edits = {}
+        missing_tasks = missing_analyses(epic_manifest)
+        if missing_tasks:
+            st.error(f"{len(missing_tasks)} tâche(s) sans analyse : générer ou réviser le découpage avant de le "
+                     f"valider.", icon=":material/error:")
         for index, task in enumerate(review_tasks, 1):
-            path = task_file(task)
-            task_content = ""
-            if path and os.path.exists(path):
-                with open(path, "r", encoding="utf-8") as f:
-                    task_content = f.read()
+            path, task_content = task_analysis(task)
             label = task.get("key") or f"Tâche {index} (à créer)"
-            with st.expander(f"{label} — {task.get('summary', '')}", expanded=len(review_tasks) == 1):
+            with st.expander(f"{label} — {task.get('summary', '')}",
+                             expanded=len(review_tasks) == 1 or not task_content.strip()):
+                if not task_content.strip():
+                    st.error(f"Analyse absente ({path or 'aucun fichier'}) : générer ou réviser.",
+                             icon=":material/error:")
                 if task.get("key"):
                     show_publication_status(task["key"], task_content)
                 else:
@@ -939,7 +939,8 @@ if PAGE == "lancement":
         def save_task_edits():
             """Corrections manuelles enregistrées localement (fichier, mémoire) ; publiées à la validation."""
             for path, (task_key, before, after) in task_edits.items():
-                if not path:
+                # Rien d'écrit sans modification, et jamais une analyse vide sur un fichier
+                if not path or after == before or not after.strip():
                     continue
                 with open(path, "w", encoding="utf-8") as f:
                     f.write(after)
@@ -976,7 +977,7 @@ if PAGE == "lancement":
 
         with col_epic_split:
             if st.button("📌 Valider le découpage et créer les tâches", use_container_width=True,
-                         key="epic_split_btn", disabled=not review_tasks,
+                         key="epic_split_btn", disabled=not review_tasks or bool(missing_tasks),
                          help="Crée dans Jira les tâches du découpage et publie les analyses modifiées, "
                               "sans générer les patchs."):
                 save_task_edits()
@@ -987,7 +988,7 @@ if PAGE == "lancement":
 
         with col_epic_validate:
             if st.button("✅ Valider le découpage & Générer les Patchs", type="primary", use_container_width=True,
-                         key="epic_validate_btn", disabled=not review_tasks):
+                         key="epic_validate_btn", disabled=not review_tasks or bool(missing_tasks)):
                 save_task_edits()
                 if validate_epic_split(active_epic, active_project, active_repo, active_schema) and \
                         run_epic_patches(active_epic, active_project, active_repo, active_schema):
