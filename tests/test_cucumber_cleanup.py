@@ -112,7 +112,7 @@ def test_created_objects_are_read_from_tables_and_integrated_files_and_left_over
         return [{"code": answers[name]}]
     before = cc.snapshot(objects, "s", query)
     found = cc.leftovers(objects, "s", query, before)
-    assert found["toleres"] == ["produit P-TEST, DO1 : CLOSED (cloture, toléré)"]
+    assert found["toleres"] == ["produit P-TEST, DO1 : CLOSED (conserve, toléré)"]
     assert found["restes"] == ["implantation S1, DO1, P-TEST : encore présent (1)"]
     assert found["propres"] == ["document DOC_BL : vide (comme avant)"]
     answers["document"] = "imprimante-test"

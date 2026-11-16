@@ -199,6 +199,10 @@ public class NettoyageHooks {
             return null;
         } catch (Exception e) {
             String cause = cause(e);
+            if (action.etape != null && action.etape.path("facultatif").asBoolean(false)) {
+                // Step préalable (ex. terminer un mouvement en cours) : rien à faire n'est pas une erreur
+                return "absent : facultatif, " + cause;
+            }
             return ABSENT.matcher(cause).find() ? "absent : " + cause : cause;
         }
     }

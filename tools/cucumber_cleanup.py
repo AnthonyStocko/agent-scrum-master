@@ -24,7 +24,7 @@ RESOURCE_DIR = "src/test/resources/cucumber/nettoyage"
 PROJECT_CATALOGUE = "catalogue_projet.json"
 PLUGIN = "cucumber.nettoyage.JournalEtapes"
 RUNNER_GLOB = "src/test/java"
-MODES = ("suppression", "annulation", "cloture", "restauration", "fichiers", "couvert", "lecture")
+MODES = ("suppression", "annulation", "cloture", "restauration", "fichiers", "couvert", "lecture", "conserve")
 LESSON = ("un test laisse l'environnement dans l'état où il l'a trouvé : chaque step de création ou de modification "
           "a son nettoyage (catalogue cucumber/nettoyage), rejoué par le hook @After du projet")
 _STEP = re.compile(r"^\s*(?:Given|When|Then|And|But|\*|Soit|Quand|Alors|Et|Mais)\s+(.*?)\s*$")
