@@ -1,0 +1,180 @@
+{
+  "version": 1,
+  "description": "Steps de mise en place qui créent ou modifient des données, et leur nettoyage (rejoué par le hook @After du projet, dans l'ordre inverse). Gabarits : {colonne} = valeur de la ligne du step d'origine ; {fichier:nom} = valeur lue dans le fichier intégré ; {ctx:CLÉ.chemin} = valeur du contexte du scénario au moment du nettoyage ; {origine:colonne} = valeur LUE avant la modification. mode : suppression | annulation | cloture | restauration | couvert (défait par le nettoyage d'un autre step) | lecture (ne crée ni ne modifie rien). verification : requête de relecture après le second run de la preuve ({…} remplis comme le nettoyage) ; propre = valeurs sans reste, tolere = reste accepté (annulé, clôturé), comparaison avant = même valeur qu'avant le premier run.",
+  "etapes": [
+    {
+      "step": "CARTO- Les implantations suivantes",
+      "objet": "implantation",
+      "mode": "suppression",
+      "nettoyage": [
+        {
+          "step": "CARTO- Suppression des implantations suivantes",
+          "classe": "cucumber.features.wmsCartography.WmsPlantConfigStep",
+          "methode": "deletePlantConfig",
+          "table": {
+            "refLogisticUnitSite.refSite.code": "{refSiteCode}",
+            "refLogisticUnitSite.refLogisticUnit.refProduct.code": "{refProductCode}"
+          }
+        }
+      ],
+      "verification": {
+        "sql": "SELECT count(*)::text AS code FROM wms_plant_config pc JOIN ref_logistic_unit_site lus ON lus.ref_logistic_unit_site_id = pc.ref_logistic_unit_site_id JOIN ref_logistic_unit lu ON lu.ref_logistic_unit_id = lus.ref_logistic_unit_id JOIN ref_product p ON p.ref_product_id = lu.ref_product_id WHERE p.code = '{refProductCode}'",
+        "propre": [
+          "0"
+        ]
+      }
+    },
+    {
+      "step": "CONTENT- Le stock suivant",
+      "objet": "stock et UM",
+      "mode": "suppression",
+      "nettoyage": [
+        {
+          "step": "CONTENT- Initialisation du contenu répondant aux caractéristiques",
+          "classe": "cucumber.features.wmsContent.WmsContentStep",
+          "methode": "contentInitialisationDuContenuRépondantAuxCaractéristiques",
+          "table": {
+            "wmsContent.refProduct.code": "{refProductCode}",
+            "wmsContent.refStockOwner.code": "{refStockOwnerCode}"
+          },
+          "repeter": "CONTENT- Modification de contenu"
+        },
+        {
+          "step": "CONTENT- Modification de contenu",
+          "classe": "cucumber.features.wmsContent.WmsContentStep",
+          "methode": "contentModificationDeContenu",
+          "table": {
+            "motiveInfo.motiveOperation": "DECREASE_QUANTITY",
+            "quantity": "{ctx:WMS_CONTENT.quantity}"
+          }
+        }
+      ],
+      "verification": {
+        "sql": "SELECT coalesce(sum(c.quantity), 0)::text AS code FROM wms_content c JOIN ref_product p ON p.ref_product_id = c.ref_product_id WHERE p.code = '{refProductCode}' AND c.quantity > 0",
+        "propre": [
+          "0"
+        ]
+      }
+    },
+    {
+      "step": "INIT- Intégration des fichiers GS1",
+      "objet": "données des fichiers GS1",
+      "mode": "fichiers",
+      "fichiers": [
+        {
+          "message": "catalogueItemNotification",
+          "objet": "produit",
+          "mode": "cloture",
+          "valeurs": {
+            "produit": "//*[local-name()='tradeItem']/*[local-name()='additionalTradeItemIdentification'][@additionalTradeItemIdentificationTypeCode='FOR_INTERNAL_USE_1']",
+            "donneur": "(//*[local-name()='additionalPartyIdentification'][@additionalPartyIdentificationTypeCode='FOR_INTERNAL_USE_1'])[1]"
+          },
+          "nettoyage": [
+            {
+              "step": "PRODUCT- Clôture du produit",
+              "classe": "cucumber.features.refProduct.RefProductStep",
+              "methode": "clôtureDuProduit",
+              "table": {
+                "refStockOwner.code": "{fichier:donneur}",
+                "code": "{fichier:produit}"
+              }
+            }
+          ],
+          "verification": {
+            "sql": "SELECT status AS code FROM ref_product WHERE code = '{fichier:produit}'",
+            "propre": [
+              ""
+            ],
+            "tolere": [
+              "CLOSED"
+            ]
+          }
+        },
+        {
+          "message": "warehousingOutboundInstruction",
+          "objet": "ordre de préparation",
+          "mode": "annulation",
+          "valeurs": {
+            "ordre": "//*[local-name()='warehousingOutboundInstructionIdentification']/*[local-name()='entityIdentification']"
+          },
+          "nettoyage": [
+            {
+              "step": "PREP- Annulation des ordres de préparation",
+              "classe": "cucumber.features.wmsPreparation.WmsPreparationOrderActionStep",
+              "methode": "annulationDesCommandess",
+              "table": {
+                "code": "{fichier:ordre}"
+              }
+            }
+          ],
+          "verification": {
+            "sql": "SELECT status AS code FROM wms_preparation_order WHERE code = '{fichier:ordre}'",
+            "propre": [
+              ""
+            ],
+            "tolere": [
+              "CANCELLED"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "step": "REPORT- Modification du document en contexte",
+      "objet": "document",
+      "mode": "restauration",
+      "lecteur": "document",
+      "verification": {
+        "sql": "SELECT coalesce(string_agg(e.code, ',' ORDER BY e.code), '') AS code FROM ref_report_doc d LEFT JOIN ref_report_doc_exchange de ON de.ref_report_doc_id = d.ref_report_doc_id LEFT JOIN ref_report_exchange e ON e.ref_report_exc_id = de.ref_report_exc_id WHERE d.code = '{document}'",
+        "comparaison": "avant",
+        "document": "REPORT- Initialisation du document {string}"
+      }
+    },
+    {
+      "step": "PREP- Campagne et Mise en Préparation des ordres de préparation avec validation des ordres logistiques de réapprovisionnement",
+      "objet": "campagne",
+      "mode": "couvert",
+      "par": "annulation de l'ordre de préparation"
+    },
+    {
+      "step": "PREP- Campagne et Mise en Préparation des ordres de préparation",
+      "objet": "campagne",
+      "mode": "couvert",
+      "par": "annulation de l'ordre de préparation"
+    },
+    {
+      "step": "PREP- Préparation des unités de préparation de l'ordre de préparation {string}",
+      "objet": "préparation",
+      "mode": "couvert",
+      "par": "annulation de l'ordre de préparation"
+    },
+    {
+      "step": "KIS- Ouvrir une interaction {string} sans choix du site",
+      "objet": "interaction",
+      "mode": "couvert",
+      "par": "fermeture de l'interaction (hook du Standard) et annulation de l'ordre"
+    },
+    {
+      "step": "KIS- Ouvrir une interaction {string}",
+      "objet": "interaction",
+      "mode": "couvert",
+      "par": "fermeture de l'interaction (hook du Standard) et annulation de l'ordre"
+    },
+    {
+      "step": "KIS- Entrer sur cette interaction",
+      "objet": "interaction",
+      "mode": "couvert",
+      "par": "annulation de l'ordre de préparation"
+    },
+    {
+      "step": "KIS- Fermer cette interaction",
+      "objet": "interaction",
+      "mode": "lecture"
+    },
+    {
+      "step": "REPORT- Initialisation du document {string}",
+      "objet": "document",
+      "mode": "lecture"
+    }
+  ]
+}

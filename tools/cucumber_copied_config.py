@@ -567,8 +567,10 @@ class RunGuard:
     """
 
     def __init__(self, client_name: str, profile: dict, log=print, restore=None, console=None, stop=None,
-                 wait_s: int = SLOT_WAIT_SECONDS, poll_s: int = 5):
+                 wait_s: int = SLOT_WAIT_SECONDS, poll_s: int = 5, restore_reference: bool = True, on_ready=None):
         self.client, self.profile, self.log = client_name, profile, log
+        # restore_reference=False : second run de la preuve du nettoyage, sur les données laissées par le premier
+        self.restore_reference, self.on_ready = restore_reference, on_ready
         self.schema = test_schema(profile)
         self.ref = reference(profile)
         self._restore, self._console, self._stop = restore, console, stop
@@ -588,6 +590,11 @@ class RunGuard:
             invalidate_on_version_change(self.client, self.profile)
             self.log(f"[CONFIG COPIÉE] ⛔ Run non lancé : {problem}.")
             return f"mode configuration copiée : {problem}"
+        if not self.restore_reference:
+            self.info["sans_restauration"] = True
+            self.log(f"[CONFIG COPIÉE] Run SANS restauration de la copie de référence (preuve du nettoyage : données "
+                     f"laissées par le run précédent dans {self.schema}).")
+            return ""
         restore = self._restore or _restore_reference
         entry = restore(self.client, self.ref["dump"], self.schema, lambda m: self.log(f"[CONFIG COPIÉE] {m}"))
         if not entry.get("ok"):
@@ -596,6 +603,11 @@ class RunGuard:
                          restauration_duree_s=entry.get("duree_s"))
         self.log(f"[CONFIG COPIÉE] Copie de référence du {self.ref.get('date', '?')[:16]} restaurée dans "
                  f"{self.schema} ({entry.get('duree_s', '?')} s).")
+        if self.on_ready:
+            try:
+                self.on_ready()
+            except Exception as e:  # noqa: BLE001 - relevé d'avant run impossible : signalé par la preuve
+                self.log(f"[CONFIG COPIÉE] ⚠️ Relevé avant le run impossible : {str(e)[:200]}")
         return ""
 
     def check(self, build_url: str) -> str:
@@ -630,14 +642,15 @@ def _restore_reference(client_name: str, dump: str, schema: str, log) -> dict:
     return db_restore.restore_reference(client_name, dump, schema, log)
 
 
-def run_guard(client_name: str, profile: dict = None, log=print):
+def run_guard(client_name: str, profile: dict = None, log=print, restore_reference: bool = True, on_ready=None):
     """Garde des runs du client en mode configuration copiée ; None si l'option est inactive."""
     if not client_name:
         return None
     if profile is None:
         from tools import cucumber_profile
         profile = cucumber_profile.effective_profile(cucumber_profile.load_profile(client_name))
-    return RunGuard(client_name, profile, log) if active(profile) else None
+    return RunGuard(client_name, profile, log, restore_reference=restore_reference,
+                    on_ready=on_ready) if active(profile) else None
 
 
 def client_of(sources: dict = None, worktree: str = "") -> str:

@@ -192,7 +192,12 @@ def latest_written_lot(state: dict, spec_id: str) -> dict:
 def lot_green(lot: dict) -> bool:
     """Lot dont tous les scénarios exécutés sont verts sur Jenkins (statut « pertinent »)."""
     scenarios = list(((lot.get("execution") or {}).get("scenarios") or {}).values())
-    return bool(scenarios) and all(s.get("statut") == "pertinent" for s in scenarios)
+    green = bool(scenarios) and all(s.get("statut") == "pertinent" for s in scenarios)
+    if green and os.getenv("CUCUMBER_CLEANUP_PROOF", "1").strip() != "0":
+        # Vert seulement avec la preuve du nettoyage (deux runs sans restauration, base relue) : un lot vert d'avant
+        # cette règle est revérifié
+        return all(((s.get("niveaux") or {}).get("nettoyage") or [""])[0] == "ok" for s in scenarios)
+    return green
 
 
 def mark_reprise(state: dict, spec_ids: list) -> dict:

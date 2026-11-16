@@ -18,7 +18,7 @@ import requests
 from dotenv import load_dotenv
 
 from tools import env_tools, secret_tools, cucumber_cost, cucumber_lessons, estimation
-from tools import cucumber_env_diagnosis, cucumber_copied_config, cucumber_anticipation, cucumber_anticipation_code, cucumber_business_rules
+from tools import cucumber_env_diagnosis, cucumber_copied_config, cucumber_anticipation, cucumber_anticipation_code, cucumber_business_rules, cucumber_cleanup
 from tools import bitbucket_std, client_version, cucumber_a_revoir, cucumber_arbitrage, cucumber_compile, cucumber_db_proof, cucumber_fix_budget, cucumber_stray, cucumber_incidents, cucumber_init_fix, cucumber_isolation, cucumber_lock, cucumber_routes, cucumber_test_data, cucumber_test_selection, cucumber_jobs, cucumber_modules, cucumber_delivery, cucumber_library, cucumber_library_upgrade, standard_version, cucumber_bilan, cucumber_checks, cucumber_coverage, cucumber_data_rules, cucumber_disabled, cucumber_guard, cucumber_job, cucumber_decisions, cucumber_detection, cucumber_diagnostic, cucumber_failures, cucumber_environment, cucumber_rules, cucumber_run, cucumber_testability, cucumber_preflight, cucumber_results, cucumber_links, cucumber_server_logs, groundcover_tools, mcp_servers, cucumber_import, cucumber_init, cucumber_recreation, cucumber_init_data, cucumber_initializers, cucumber_profile, cucumber_tools, cucumber_verify, cucumber_versions, cucumber_wait_steps, db_tools, integration_tools, knowledge_tools, pr_review, assistant, db_restore, jenkins_tools, skills
 from tools.jira_cli import attach_files, create_or_get_issue
 from tools.epic_tools import (
@@ -2300,6 +2300,11 @@ def test_selection_block(client: str, worktree: str, files: list = ()) -> str:
     return cucumber_test_selection.prompt_block(selection, copied) + business_rules_block(profile, worktree, files)
 
 
+def cleanup_block() -> str:
+    """Consigne « NETTOYAGE DES DONNÉES » des prompts de lot (CUCUMBER_CLEANUP=0 : '')."""
+    return "" if os.getenv("CUCUMBER_CLEANUP", "1").strip() == "0" else cucumber_cleanup.PROMPT
+
+
 def business_rules_source(profile: dict) -> tuple:
     """(schéma de référence, date de la copie) des règles métier ; ('', '') si CUCUMBER_BUSINESS_RULES=0 ou sans schéma."""
     if os.getenv("CUCUMBER_BUSINESS_RULES", "1").strip() == "0":
@@ -3349,6 +3354,12 @@ def check_cucumber_lot(client: str, label: str, worktree: str, base: str, cucumb
                             or os.getenv("CUCUMBER_DB_SCHEMA", "")).strip()
         errors += cucumber_test_selection.missing_transport(worktree, files, transport_schema,
                                                             cucumber_copied_config.copy_query)
+    # Nettoyage des données (tests exécutables sans l'agent) : plugin, hook et catalogue installés dans le projet ;
+    # step de création ou de modification sans nettoyage connu → erreur de lot
+    if os.getenv("CUCUMBER_CLEANUP", "1").strip() != "0":
+        for rel in cucumber_cleanup.install(worktree):
+            print(f"[LOT {label}] 🧹 Nettoyage des données installé ou mis à jour : {rel}")
+        errors += cucumber_cleanup.check_files(worktree, files, [cucumber_std_dir])
     # Règles métier du client (axe B) : besoin attendu avant l'action contredit par une règle active ou sans cas réel
     # dans la base de référence → erreur de lot, avant tout run
     errors += business_rules_errors(own_profile, worktree, files)
@@ -7549,7 +7560,7 @@ def run_cucumber_client(args, work_key: str, local_client_repo: str, local_std_r
         # Adresse de livraison de test (profil, sinon défaut de l'agent) et données de référentiel jamais inventées :
         # prompt système des lots et prompts de correction
         "donnees_test": cucumber_test_data.prompt_block(profile) + cucumber_lessons.prompt_block(client)
-        + test_selection_block(client, worktree),
+        + test_selection_block(client, worktree) + cleanup_block(),
         "knowledge_block": f"\n{shared['bloc']}\n" if shared["bloc"] else "",
         # Accès base en lecture seule de tous les lots et de leurs corrections (--db-schema), journalisé par lot
         # Base de l'environnement où Jenkins joue les tests (CUCUMBER_DB_*), à défaut la base DB_*

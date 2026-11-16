@@ -1130,7 +1130,7 @@ def _read_report(path: str) -> list:
 
 
 def run_tags(mode: str, worktree: str, base: str, build_fn, tags: str, env: str, overrides: dict, label: str,
-             sources: dict = None) -> dict:
+             sources: dict = None, restore_reference: bool = True, on_ready=None) -> dict:
     """
     Exécute les scénarios filtrés par `tags` sur l'environnement `env` ; `overrides` {chemin relatif: texte}
     remplace des .feature le temps de l'exécution (mutation) ; `sources` (job_sources) : paramètres du job Jenkins
@@ -1148,7 +1148,10 @@ def run_tags(mode: str, worktree: str, base: str, build_fn, tags: str, env: str,
     if mode in ("branche", "jenkins"):
         # Configuration copiée (profil client) : copie de référence restaurée avant le run, schéma du run vérifié
         from tools import cucumber_copied_config
-        guard = cucumber_copied_config.run_guard(cucumber_copied_config.client_of(sources, worktree))
+        guard = cucumber_copied_config.run_guard(cucumber_copied_config.client_of(sources, worktree),
+                                                 restore_reference=restore_reference, on_ready=on_ready)
+        if guard is None and on_ready:
+            on_ready()
         result = (run_on_branch(worktree, tags, env, overrides, label, sources or {}, guard) if mode == "branche"
                   else _run_with_patch(worktree, base, tags, env, overrides, label, sources, guard))
         if guard is not None:
@@ -1161,6 +1164,8 @@ def run_tags(mode: str, worktree: str, base: str, build_fn, tags: str, env: str,
             return {"ok": False, "message": "CUCUMBER_VERIFY_LOCAL_CMD sans {env} : environnement non sélectionnable",
                     "build": "", "resultats": {}}
         build = build_fn()
+        if on_ready:
+            on_ready()
         for rel, text in overrides.items():
             _write_text(os.path.join(build, *rel.split("/")), text)
         for old in _report_files(build):
@@ -1567,6 +1572,12 @@ def final_status(levels: dict) -> tuple:
         return "cascade", client[1]
     if client[0] == "ko":
         return "invalide", f"échoue sur le client : {client[1]}"
+    cleanup = levels.get("nettoyage")
+    if cleanup and cleanup[0] == "ko":
+        # Le test ne laisse pas l'environnement dans l'état où il l'a trouvé : jamais vert
+        return "invalide", f"nettoyage : {cleanup[1]}"
+    if cleanup and cleanup[0] == "nv":
+        return "non_verifie", f"preuve du nettoyage : {cleanup[1]}"
     if standard and standard[0] == "ko" and standard[1] == PASSES_STILL:
         return "faible", "passe sur le Standard : le scénario ne prouve pas l'override"
     if mutation[0] == "ko" and mutation[1] == PASSES_STILL:
@@ -1576,6 +1587,45 @@ def final_status(levels: dict) -> tuple:
     if mutation[0] != "ok":
         return "non_verifie", mutation[1] if mutation[1] == NO_VALUE_TO_MUTATE else f"mutation : {mutation[1]}"
     return "pertinent", ""
+
+
+def cleanup_proof(worktree: str, features: list, sources: dict = None):
+    """
+    Preuve du nettoyage (CUCUMBER_CLEANUP_PROOF=1, défaut) : {avant : relevé des valeurs modifiées, appelé juste
+    après la restauration du premier run ; juger(second run, (feature, titre)) : niveau}. None si désactivée ou sans
+    base lisible (schéma de la copie, à défaut CUCUMBER_DB_SCHEMA).
+    """
+    if os.getenv("CUCUMBER_CLEANUP_PROOF", "1").strip() == "0":
+        return None
+    from tools import cucumber_cleanup, cucumber_copied_config, cucumber_profile
+    client = cucumber_copied_config.client_of(sources, worktree)
+    profile = cucumber_profile.effective_profile(cucumber_profile.load_profile(client)) if client else {}
+    schema = ((cucumber_copied_config.test_schema(profile) if cucumber_copied_config.active(profile) else "")
+              or os.getenv("CUCUMBER_DB_SCHEMA", "")).strip()
+    if not schema:
+        return None
+    objects = {rel: cucumber_cleanup.created_objects(worktree, rel) for rel in sorted(set(features))}
+    before = {}
+
+    def avant():
+        for items in objects.values():
+            before.update(cucumber_cleanup.snapshot(items, schema, cucumber_copied_config.copy_rows))
+
+    def juger(second: dict, key: tuple) -> tuple:
+        if not second["ok"]:
+            return "nv", f"second run sans restauration non exécuté : {second['message']}"
+        level = _level(second["resultats"].get(key), False)
+        if level[0] != "ok":
+            return "ko", (f"échoue au second run sans restauration ({level[1]}) : nettoyage incomplet ou création "
+                          f"non rejouable")
+        found = cucumber_cleanup.leftovers(objects.get(key[0], []), schema, cucumber_copied_config.copy_rows, before)
+        if found["restes"]:
+            return "ko", "données restantes après deux runs : " + " ; ".join(found["restes"])
+        if found["illisibles"]:
+            return "nv", "relecture impossible : " + " ; ".join(found["illisibles"])
+        return "ok", ("deux runs verts, base propre" + (" (tolérés : " + " ; ".join(found["toleres"]) + ")"
+                                                         if found["toleres"] else ""))
+    return {"avant": avant, "juger": juger}
 
 
 def verify_lot(mode: str, worktree: str, base: str, build_fn, files: list, scenarios: dict, kinds: dict,
@@ -1622,11 +1672,13 @@ def verify_lot(mode: str, worktree: str, base: str, build_fn, files: list, scena
         outcome = init_outcome(run["resultats"], init, init_tags)
         return outcome, "" if outcome["ok"] else outcome["message"]
     builds, out = [], {}
+    proof = cleanup_proof(worktree, [k[0] for k in key_of.values()], sources)
     # Option : mutation dans le même build (copies <feature>_mut.feature, tags <tag>_mut) — un build de moins
     copies, counts, copy_of, mutated_tags = mutation_copies(worktree, [k[0] for k in key_of.values()], scenarios) \
         if merged_mutation() else ({}, {}, {}, set())
     client = run_tags(mode, worktree, base, build_fn, expression(scenarios, sorted(mutated_tags)),
-                      os.getenv("CUCUMBER_VERIFY_ENV", "").strip(), copies, f"{label}-client", sources)
+                      os.getenv("CUCUMBER_VERIFY_ENV", "").strip(), copies, f"{label}-client", sources,
+                      **({"on_ready": proof["avant"]} if proof else {}))
     init_result, stop = judged(client)
     builds.append({"execution": "client" + (" + mutation" if copies else ""), "build": client["build"],
                    "message": client["message"], **({"init": init_result} if init_result else {}),
@@ -1639,6 +1691,16 @@ def verify_lot(mode: str, worktree: str, base: str, build_fn, files: list, scena
     levels = {tag: {"client": _level(client["resultats"].get(key_of.get(tag, ("", ""))), False)
                     if client["ok"] else ("nv", client["message"])} for tag in scenarios}
     passing = [t for t in scenarios if levels[t]["client"][0] == "ok"]
+    if proof and passing:
+        # Preuve du nettoyage, AVANT toute autre exécution (qui restaurerait la copie) : second run des scénarios
+        # verts sans restauration, puis relecture de la base
+        second = run_tags(mode, worktree, base, build_fn, expression(passing), os.getenv("CUCUMBER_VERIFY_ENV",
+                          "").strip(), {}, f"{label}-nettoyage", sources, restore_reference=False)
+        builds.append({"execution": "nettoyage (second run sans restauration)", "build": second["build"],
+                       "message": second["message"], **_copied_info(second)})
+        for tag in passing:
+            levels[tag]["nettoyage"] = proof["juger"](second, key_of.get(tag, ("", "")))
+        passing = [t for t in passing if levels[t]["nettoyage"][0] == "ok"]
     overrides = [t for t in passing if kinds.get(t) == "override"]
     std_env = os.getenv("CUCUMBER_VERIFY_ENV_STD", "").strip()
     if overrides and std_env:
