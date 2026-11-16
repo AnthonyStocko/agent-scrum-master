@@ -55,6 +55,9 @@ public class NettoyageHooks {
     private static final Pattern GABARIT = Pattern.compile("\\{(?:(fichier|ctx|origine):)?([^{}]+)}");
     private static final Pattern ABSENT = Pattern.compile(
             "(?i)(empty|vide|aucun|not found|introuvable|no element|index 0 out of bounds|n'existe pas|does not exist)");
+    private static final DataTable.TableConverter CONVERTISSEUR =
+            new io.cucumber.datatable.DataTableTypeRegistryTableConverter(
+                    new io.cucumber.datatable.DataTableTypeRegistry(java.util.Locale.ENGLISH));
     private static JsonNode catalogue;
 
     private final TestContext testContext;
@@ -254,7 +257,8 @@ public class NettoyageHooks {
         cellules.add(entetes);
         cellules.add(ligne);
         try {
-            methode.invoke(instance, DataTable.create(cellules));
+            // Convertisseur obligatoire : sans lui, asMaps() du step rejoué échoue (« created without a converter »)
+            methode.invoke(instance, DataTable.create(cellules, CONVERTISSEUR));
         } catch (InvocationTargetException e) {
             throw e.getCause() instanceof Exception ? (Exception) e.getCause() : e;
         }
