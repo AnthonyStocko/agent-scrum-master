@@ -89,6 +89,8 @@ def _isolated_knowledge(tmp_path, monkeypatch):
     monkeypatch.setenv("CUCUMBER_TEST_SELECTION", "0")
     monkeypatch.setenv("CUCUMBER_ANTICIPATION", "0")
     monkeypatch.setenv("CUCUMBER_BUSINESS_RULES", "0")
+    monkeypatch.setenv("ESTIMATION_ENABLED", "0")
+    monkeypatch.setenv("ESTIMATION_SETTINGS_FILE", str(tmp_path / "estimation_projets.json"))
     monkeypatch.setenv("CUCUMBER_SOURCE_VERSION_CHECK", "0")
     from tools import cucumber_cost
     monkeypatch.setattr(cucumber_cost, "SESSIONS_FILE", str(tmp_path / "sessions_cout.json"))
@@ -99,7 +101,7 @@ def _isolated_knowledge(tmp_path, monkeypatch):
     def guarded(*args, **kwargs):
         kept = {name: os.environ.get(name) for name in ("AGENT_KNOWLEDGE_DIR", "GROUNDCOVER_MCP_ENABLED",
                                                          "CUCUMBER_JOB_VALUES_CHECK", "AGENT_RUN_LOGS_DIR",
-                                                         "AGENT_JOURNAL_PATH", "CUCUMBER_TEST_SELECTION", "CUCUMBER_ANTICIPATION", "CUCUMBER_BUSINESS_RULES", 
+                                                         "AGENT_JOURNAL_PATH", "CUCUMBER_TEST_SELECTION", "CUCUMBER_ANTICIPATION", "CUCUMBER_BUSINESS_RULES", "ESTIMATION_ENABLED", "ESTIMATION_SETTINGS_FILE",
                                                          "CUCUMBER_SOURCE_VERSION_CHECK")}
         try:
             return original(*args, **kwargs)

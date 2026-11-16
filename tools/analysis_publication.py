@@ -428,10 +428,26 @@ def publish(issue_key: str, text: str = None, publisher=None, jira=None) -> dict
     return status(issue_key, text)
 
 
-def validate(issue_key: str, text: str, publisher=None, jira=None) -> dict:
-    """Validation de l'utilisateur : enregistre l'analyse relue puis la publie dans Jira."""
+def validate(issue_key: str, text: str, publisher=None, jira=None, estimate_put=None) -> dict:
+    """
+    Validation de l'utilisateur : enregistre l'analyse relue, la publie dans Jira, puis écrit la valeur probable du
+    chiffrage dans le champ d'estimation du projet (SEULEMENT ici, jamais en brouillon ni en révision).
+    `estimate_put(clé, champs)` : écriture des champs (tests) ; avec un `publisher` de test sans `estimate_put`, le
+    chiffrage n'est pas écrit.
+    """
     save_draft(issue_key, text)
-    return publish(issue_key, text, publisher, jira)
+    state = publish(issue_key, text, publisher, jira)
+    if publisher is None or estimate_put is not None:
+        from tools import estimation
+        try:
+            result = estimation.publish(issue_key, text, put=estimate_put)
+            state = {**state, "chiffrage": result}
+            if result["ecrit"]:
+                state["libelle"] = f"{state.get('libelle', '')} ; {result['message']}".strip(" ;")
+        except Exception as e:  # noqa: BLE001 - analyse publiée ; chiffrage signalé, non bloquant
+            state = {**state, "chiffrage": {"ecrit": False, "message": f"chiffrage non écrit dans Jira : {e}"}}
+            state["libelle"] = f"{state.get('libelle', '')} ; chiffrage non écrit dans Jira : {e}".strip(" ;")
+    return state
 
 
 # ---------------------------------------------------------------------------

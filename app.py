@@ -236,6 +236,23 @@ def interruption_cause(returncode: int) -> str:
             f"le traitement s'est arrêté avant la fin (code retour {returncode}), voir le journal technique")
 
 
+def show_estimation(text: str, project: str) -> None:
+    """Résumé du chiffrage de l'analyse (total probable et fourchette) et problèmes de la section."""
+    from tools import estimation
+    if not text or os.getenv("ESTIMATION_ENABLED", "1").strip() == "0":
+        return
+    config = estimation.settings(project)
+    parsed = estimation.parse(text)
+    problems = estimation.check(text, config)
+    if parsed["lignes"]:
+        sums = estimation.totals(parsed)
+        st.caption(f"Chiffrage : {sums['probable']:g} {config['unite']} probables (fourchette {sums['basse']:g} – "
+                   f"{sums['haute']:g}), confiance {parsed['confiance'] or '?'} — écrit dans Jira "
+                   f"({config['champ']}) seulement à la validation de l'analyse.")
+    if problems:
+        st.warning("Chiffrage à compléter : " + " ; ".join(problems), icon=":material/calculate:")
+
+
 def show_publication_status(issue_key: str, text: str = None) -> None:
     """Statut de l'analyse : brouillon local ou publiée dans Jira (redevient brouillon si révisée après)."""
     state = analysis_publication.status(issue_key, text)
@@ -767,6 +784,7 @@ if PAGE == "lancement":
         if flash and flash[0] == active_ticket:
             st.success(flash[1])
         show_publication_status(active_ticket, cadrage_content)
+        show_estimation(cadrage_content, active_project)
 
         user_analysis = st.text_area(
             "Analyse enregistrée (Modifiable directement avant de générer le patch) :",
@@ -4641,8 +4659,35 @@ if PAGE == "connaissances":
     render_knowledge_tab()
 
 
+def render_estimation_settings() -> None:
+    """Réglages du chiffrage par projet : unité, champ Jira cible, activités incluses."""
+    from tools import estimation
+    with st.expander("Chiffrage des analyses, par projet", icon=":material/calculate:"):
+        project = st.text_input("Projet Jira", value=os.getenv("JIRA_PROJECT_KEY", ""), key="estimation_project")
+        if not project.strip():
+            return
+        config = estimation.settings(project)
+        with st.form(f"estimation_settings_{project.strip().upper()}", border=False):
+            unit = st.radio("Unité", list(estimation.UNITS), horizontal=True,
+                            index=list(estimation.UNITS).index(config["unite"]))
+            field = st.text_input("Champ Jira de l'estimation", value=config["champ"],
+                                  help="timeoriginalestimate (estimation initiale) ou champ des points d'histoire "
+                                       "(ex. customfield_10016). La valeur probable y est écrite à la validation "
+                                       "de l'analyse, jamais avant.")
+            hours = st.number_input("Heures par jour-homme", min_value=1.0, max_value=24.0, step=0.5,
+                                    value=float(config["heures_par_jour"]))
+            labels = dict(estimation.ACTIVITIES)
+            chosen = st.multiselect("Activités incluses", list(labels), default=config["activites"],
+                                    format_func=lambda k: labels[k])
+            if st.form_submit_button("Enregistrer", icon=":material/save:"):
+                estimation.save_settings(project, {"unite": unit, "champ": field.strip(), "activites": chosen,
+                                                   "heures_par_jour": hours})
+                st.toast(f"Chiffrage du projet {project.strip().upper()} enregistré.", icon=":material/check_circle:")
+
+
 if PAGE == "configuration":
     st.subheader("🛠️ Configuration globale du fichier .env")
+    render_estimation_settings()
     st.caption("Modifiez l'ensemble des variables d'environnement utilisées par l'application. "
                "Le fichier .env.example du projet donne les valeurs usuelles.")
 

@@ -17,7 +17,7 @@ from urllib.parse import urlsplit
 import requests
 from dotenv import load_dotenv
 
-from tools import env_tools, secret_tools, cucumber_cost, cucumber_lessons
+from tools import env_tools, secret_tools, cucumber_cost, cucumber_lessons, estimation
 from tools import cucumber_env_diagnosis, cucumber_copied_config, cucumber_anticipation, cucumber_anticipation_code, cucumber_business_rules
 from tools import bitbucket_std, client_version, cucumber_a_revoir, cucumber_arbitrage, cucumber_compile, cucumber_db_proof, cucumber_fix_budget, cucumber_stray, cucumber_incidents, cucumber_init_fix, cucumber_isolation, cucumber_lock, cucumber_routes, cucumber_test_data, cucumber_test_selection, cucumber_jobs, cucumber_modules, cucumber_delivery, cucumber_library, cucumber_library_upgrade, standard_version, cucumber_bilan, cucumber_checks, cucumber_coverage, cucumber_data_rules, cucumber_disabled, cucumber_guard, cucumber_job, cucumber_decisions, cucumber_detection, cucumber_diagnostic, cucumber_failures, cucumber_environment, cucumber_rules, cucumber_run, cucumber_testability, cucumber_preflight, cucumber_results, cucumber_links, cucumber_server_logs, groundcover_tools, mcp_servers, cucumber_import, cucumber_init, cucumber_recreation, cucumber_init_data, cucumber_initializers, cucumber_profile, cucumber_tools, cucumber_verify, cucumber_versions, cucumber_wait_steps, db_tools, integration_tools, knowledge_tools, pr_review, assistant, db_restore, jenkins_tools, skills
 from tools.jira_cli import attach_files, create_or_get_issue
@@ -503,6 +503,11 @@ def epic_markdown(epic_key: str) -> str:
     for number, task in enumerate(tasks, 1):
         parts += [f"## {number}. {task.get('key') or 'tâche non créée'} — {task.get('summary', '')}", "",
                   _read_text(task.get("file") or "").strip(), ""]
+    if tasks and os.getenv("ESTIMATION_ENABLED", "1").strip() != "0":
+        # Chiffrage par tâche enfant et total de l'épopée
+        parts += [estimation.epic_summary([(f"{t.get('key') or f'Tâche {n}'} — {t.get('summary', '')}",
+                                            _read_text(t.get("file") or "")) for n, t in enumerate(tasks, 1)],
+                                          epic_key.split("-")[0]), ""]
     return "\n".join(parts) if tasks else ""
 
 
@@ -1805,7 +1810,9 @@ def main():
                                children_block=children_block, revision_block=revision_block)
     elif args.step == "refine":
         prompt = render_prompt("refine", **prompt_values, feedback=args.feedback)
-    elif is_besoin:
+    if args.step in ("cadrage", "refine", "epic-cadrage") and not is_cucumber_client:
+        prompt += estimation_prompt(target_project, target_issue, jira_context, epic=args.step == "epic-cadrage")
+    if is_besoin:
         besoin_output = integration_tools.agent_output_path(target_issue)
         previous_besoin = integration_tools.load_state(target_issue)
         qa_block = integration_tools.previous_qa_block(previous_besoin)
@@ -1956,6 +1963,13 @@ def main():
     if returncode == 0 and not session_limit_hit:
         print(f"\n=== Étape {args.step.upper()} terminée avec succès pour {target_issue} ===")
         
+        # Chiffrage : total recalculé sans IA (somme des activités) avant mémoire et relecture
+        if args.step in ("cadrage", "refine") and produced(cadrage_file, run_started_at):
+            finalize_estimation(cadrage_file, target_project)
+        elif args.step == "epic-cadrage":
+            for task in load_epic_manifest(target_issue).get("tasks", []):
+                if task.get("file") and produced(task["file"], run_started_at):
+                    finalize_estimation(task["file"], target_project)
         # Enregistrement en mémoire / capitalisation d'expérience
         cadrage_content = _read_text(cadrage_file)
         # Connaissances partagées : champs communs des analyses du ticket
@@ -2319,6 +2333,43 @@ def business_rules_errors(profile: dict, worktree: str, files: list) -> list:
     except Exception as e:  # noqa: BLE001
         print(f"[RÈGLES MÉTIER] Contrôle impossible ({str(e)[:160]}).")
         return []
+
+
+def estimation_prompt(project: str, issue_key: str, jira_context: dict, epic: bool = False) -> str:
+    """
+    Consignes de la section « Chiffrage » avec l'historique de calibrage : temps réels des tickets livrés d'abord
+    enregistrés dans la mémoire, puis tickets similaires de la mémoire et de Jira. ESTIMATION_ENABLED=0 : ''.
+    """
+    if os.getenv("ESTIMATION_ENABLED", "1").strip() == "0":
+        return ""
+    query_text = f"{(jira_context or {}).get('summary', '')}\n{(jira_context or {}).get('description', '')[:3000]}"
+    try:
+        for item in estimation.record_actuals(project):
+            print(f"[CHIFFRAGE] {item['cle']} livré : {item['valeur']} {item['unite']} réellement passés pour "
+                  f"{item['chiffrage']} chiffrés (écart {item['ecart']}).")
+    except Exception as e:  # noqa: BLE001 - mémoire ou Jira illisible : calibrage sans retour d'expérience
+        print(f"[CHIFFRAGE] ⚠️ Temps réels non relus ({e}).")
+    config = estimation.settings(project)
+    history = (estimation.memory_history(project, query_text, issue_key, (jira_context or {}).get("components"))
+               + estimation.jira_history(project, query_text, issue_key, config))
+    print(f"[CHIFFRAGE] Unité {config['unite']}, {len(history)} ticket(s) similaire(s) pour le calibrage"
+          + ("" if history else " : aucun historique exploitable, fourchette élargie demandée") + ".")
+    return estimation.prompt_block(project, history, epic)
+
+
+def finalize_estimation(path: str, project: str) -> None:
+    """Section « Chiffrage » d'une analyse écrite : total recalculé (somme des activités) et contrôle signalé."""
+    text = _read_text(path)
+    if not text or os.getenv("ESTIMATION_ENABLED", "1").strip() == "0":
+        return
+    fixed, changed = estimation.normalize(text)
+    if changed:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(fixed)
+        print(f"[CHIFFRAGE] {path} : total recalculé (somme des activités).")
+    problems = estimation.check(fixed, estimation.settings(project))
+    if problems:
+        print(f"[CHIFFRAGE] ⚠️ {path} : " + " ; ".join(problems))
 
 
 ANTICIPATION_FILE = "anticipation.json"

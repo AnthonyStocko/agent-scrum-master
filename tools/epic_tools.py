@@ -119,6 +119,14 @@ def sync_epic_tasks(epic_key: str, project_key: str, previous_manifest: dict = N
         # Enregistré après chaque tâche : une relance ne recrée pas celles déjà créées
         save_epic_manifest(epic_key, manifest)
         analysis_publication.record_publication(task["key"], analysis)
+        # Validation du découpage : chiffrage probable de la tâche écrit dans son champ d'estimation
+        try:
+            from tools import estimation
+            result = estimation.publish(task["key"], analysis, project_key)
+            if result["ecrit"]:
+                print(f"[ÉPOPÉE] 💰 {task['key']} : {result['message']}")
+        except Exception as e:  # noqa: BLE001 - tâche créée ; chiffrage signalé
+            print(f"[ÉPOPÉE] ⚠️ {task['key']} : chiffrage non écrit dans Jira ({e})")
         try:
             save_cadrage_memory(task["key"], project_key, cadrage_text=analysis, jira_context={
                 "summary": summary, "components": epic_components or [], "description": analysis})
