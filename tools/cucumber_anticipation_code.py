@@ -606,7 +606,7 @@ def analyse_code(client, bundle: dict, components: list, originals: dict, declar
     if api is not None:
         for artifact, error in api.errors.items():
             unverified.setdefault(artifact, error)
-    return {"anomalies": anomalies, "non_verifies": unverified, "fichiers": len(sources)}
+    return {"anomalies": anomalies, "non_verifies": unverified, "fichiers": len(sources), "_classes": own}
 
 
 def studio_i18n_reader(repos: dict, ref: str):
@@ -620,20 +620,37 @@ def studio_i18n_reader(repos: dict, ref: str):
             return None
         if "listing" not in cache:
             cache["ref"] = pick_ref(studio, (ref, "origin/HEAD"))
-            cache["listing"] = _git(studio, "ls-tree", "-r", "--name-only", cache["ref"]).stdout.splitlines()                 if cache["ref"] else []
+            cache["listing"] = (_git(studio, "ls-tree", "-r", "--name-only", cache["ref"]).stdout.splitlines()
+                                if cache["ref"] else [])
         path = next((f for f in cache["listing"] if f.endswith(f"{component}/i18n.fr_FR.txt")), "")
         return _git(studio, "show", f"{cache['ref']}:{path}").stdout if path else None
     return read
 
 
 def analyse_all(components: list, repos: dict, ref: str, schema: str, std, candidates_for, query) -> dict:
-    """Analyse d'anticipation 1.a (Studio) + 1.b (code du client) à la version testée."""
-    from tools import cucumber_anticipation
+    """
+    Analyse d'anticipation 1.a (Studio) + 1.b (code du client) + 1.c (configuration de la copie) à la version testée.
+    `query(sql, schema)` → [{"code"}] : lignes et cellules entières (cucumber_copied_config.copy_rows).
+    """
+    from tools import cucumber_anticipation, cucumber_anticipation_config
     result = cucumber_anticipation.analyse_studio(components, repos, ref, std, candidates_for)
-    sources, bundle = result.pop("_client"), result.pop("_bundle")
+    sources, bundle, resolver = result.pop("_client"), result.pop("_bundle"), result.pop("_resolver")
     api = (StandardApi(bundle["groupe_standard"], bundle["standard_complet"])
            if bundle.get("groupe_standard") and bundle.get("standard_complet") else None)
     originals = {c["nom"]: c["xml"] for c in cucumber_anticipation.studio_components(schema, "original_xml")}
-    result["code"] = analyse_code(sources, bundle, components, originals, Declarations(schema, query), api,
+    declarations = Declarations(schema, query)
+    result["code"] = analyse_code(sources, bundle, components, originals, declarations, api,
                                   studio_i18n_reader(repos, ref))
+    own = result["code"].pop("_classes", set())
+
+    def class_exists(fqn):
+        if fqn in own:
+            return True
+        return api.has_class(fqn) if api is not None else None
+
+    def component_exists(key):
+        found = resolver.resolve(key)
+        return found["etat"], found.get("preuve", "")
+    result["config"] = cucumber_anticipation_config.analyse_config(schema, query, declarations, class_exists,
+                                                                   component_exists)
     return result

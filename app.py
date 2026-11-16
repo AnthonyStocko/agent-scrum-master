@@ -2378,8 +2378,10 @@ def load_anticipation_result(client: str) -> dict:
 
 def render_anticipation(ctx: dict, result: dict, disabled: bool = False) -> None:
     """Analyse statique d'anticipation (Studio à la version testée) : résumé, anomalies, relance."""
-    code = result.get("code") or {}
-    anomalies = [{**a, "source": "Studio"} for a in result.get("anomalies") or []] +         [{**a, "source": "code du client"} for a in code.get("anomalies") or []]
+    code, config = result.get("code") or {}, result.get("config") or {}
+    anomalies = ([{**a, "source": "configuration"} for a in config.get("anomalies") or []]
+                 + [{**a, "source": "Studio"} for a in result.get("anomalies") or []]
+                 + [{**a, "source": "code du client"} for a in code.get("anomalies") or []])
     version = result.get("version") or {}
     title = ("Analyse d'anticipation : " + (f"{len(anomalies)} anomalie(s)" if result else "jamais lancée")
              + (f" ({result['date'][:16].replace('T', ' ')})" if result.get("date") else ""))
@@ -2390,7 +2392,9 @@ def render_anticipation(ctx: dict, result: dict, disabled: bool = False) -> None
                    "entrée non déclarées par l'action ou le sous-processus appelé, composants absents, XML invalide. "
                    "Code du client (modules déployés) : appels au Standard absents de ses jars à la version, "
                    "énumérations, traductions et champs personnalisés non déclarés, traitements conditionnés au "
-                   "niveau de log, adresses de services externes en dur. Relancée d'elle-même avant chaque "
+                   "niveau de log, adresses de services externes en dur. Configuration (copie de référence) : "
+                   "branchements vers des services externes, paramètres, tâches planifiées, menus et énumérations "
+                   "pointant vers des objets absents. Relancée d'elle-même avant chaque "
                    "génération si la version testée a changé.")
         if version:
             st.markdown(f"Version testée : application @ `{version.get('reference_client', '?')}`, Standard "
@@ -2402,7 +2406,8 @@ def render_anticipation(ctx: dict, result: dict, disabled: bool = False) -> None
                            "Fichier": a["fichier"] + (f":{a['ligne']}" if a.get("ligne") else ""),
                            "Impact sur les tests": a["impact"], "Action": a["action"]} for a in anomalies],
                          hide_index=True)
-        unverified = {**(result.get("non_verifies") or {}), **(code.get("non_verifies") or {})}
+        unverified = {**(result.get("non_verifies") or {}), **(code.get("non_verifies") or {}),
+                      **(config.get("non_verifies") or {})}
         if unverified:
             st.caption(f"Non vérifiés ({len(unverified)}) : " + " ; ".join(
                 f"{k} ({v})" for k, v in sorted(unverified.items())[:12]))

@@ -729,7 +729,7 @@ def run_restore_config(client: str, source_schema: str, target_schema: str, back
             # Branchements de la copie vers les services externes du client (adresses de production) : listés avec
             # la neutralisation proposée, repris à l'étape 4
             load_job_values(client, profile)       # adresses des services de test du job : masquées
-            connections = cucumber_copied_config.external_connections(target_schema, cucumber_copied_config.copy_query)
+            connections = cucumber_copied_config.external_connections(target_schema, cucumber_copied_config.copy_rows)
             for line in cucumber_copied_config.connections_lines(connections):
                 print(f"[CONFIG CLIENT] ⚠️ Branchement externe de la copie : {line}")
             # Version réelle de la base copiée (modèle de données, déploiements Studio) : comparée à la source avant
@@ -2325,7 +2325,9 @@ def run_anticipation(client: str, client_root: str, force: bool = False) -> dict
     components = cucumber_anticipation.studio_components(schema)
     commits = {name: cucumber_tools.rev_parse(path, ref) for name, path in repos.items()
                if cucumber_tools.pick_ref(path, (ref,))}
-    empreinte = cucumber_anticipation.fingerprint(components, commits, ref)
+    reference = cucumber_copied_config.reference(profile)
+    empreinte = cucumber_anticipation.fingerprint(components, commits, ref,
+                                                  {k: reference.get(k) for k in ("date", "versions_source")})
     previous = load_anticipation(client)
     if not force and previous.get("empreinte") == empreinte:
         return previous
@@ -2336,10 +2338,10 @@ def run_anticipation(client: str, client_root: str, force: bool = False) -> dict
         print(f"[ANTICIPATION] Standard illisible ({exc}) : composants du Standard non vérifiés.")
         std = None
     result = cucumber_anticipation_code.analyse_all(components, repos, ref, schema, std, cucumber_jobs._std_candidates,
-                                                    cucumber_copied_config.copy_query)
+                                                    cucumber_copied_config.copy_rows)
     result["a_risque"] = cucumber_anticipation.features_at_risk(
         (cucumber_tools.load_inventory(client) or {}).get("specifiques") or [],
-        result["anomalies"] + result["code"]["anomalies"])
+        cucumber_anticipation.all_anomalies(result))
     result.update(empreinte=empreinte, date=datetime.now().isoformat(timespec="seconds"), schema=schema)
     os.makedirs(os.path.dirname(anticipation_path(client)), exist_ok=True)
     with open(anticipation_path(client), "w", encoding="utf-8") as f:

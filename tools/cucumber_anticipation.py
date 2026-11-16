@@ -33,7 +33,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 VALID_STATUS = "VALID"
-ANALYSIS_VERSION = 2   # changée quand les contrôles changent : analyse recalculée
+ANALYSIS_VERSION = 3   # changée quand les contrôles changent : analyse recalculée
 PRODUCT = "défaut produit probable"
 ENVIRONMENT = "risque d'environnement"
 _KIND = re.compile(r"^(?P<prefix>.+?)-(?P<kind>action|process)-(?P<rest>.+)$")
@@ -366,7 +366,7 @@ def analyse_studio(components: list, client_repos: dict, client_ref: str, std=No
     result["version"] = {"reference_client": client_ref, "standard": bundle["standard"],
                          "standard_complet": bundle["standard_complet"], "groupe_standard": bundle["groupe_standard"],
                          "forks": bundle["forks"], "groupe": bundle["groupe"]}
-    result["_client"], result["_bundle"] = client, bundle
+    result["_client"], result["_bundle"], result["_resolver"] = client, bundle, resolver
     return result
 
 
@@ -387,19 +387,24 @@ def features_at_risk(specs: list, anomalies: list) -> dict:
             caller, target = item.get("composant", ""), item.get("cible", "")
             folder = _folder(target)
             where = "/" + str(item.get("fichier", "")).replace("\\", "/")
-            if any(f"/{caller}/" in p for p in paths if caller) or any(folder in p for p in paths if folder) or                     any(where.endswith(p) for p in paths if len(p) > 1):
+            if any(f"/{caller}/" in p for p in paths if caller) or any(folder in p for p in paths if folder) or \
+                    any(where.endswith(p) for p in paths if len(p) > 1):
                 reason = f"{item['anomalie']} ({item['fichier']})"
                 if reason not in out.setdefault(spec["id"], []):
                     out[spec["id"]].append(reason)
     return out
 
 
-def fingerprint(components: list, client_commits: dict, std_version: str) -> str:
-    """Empreinte de la version testée : processus Studio déployés, commits du client à la référence, Standard."""
+def fingerprint(components: list, client_commits: dict, std_version: str, configuration: dict = None) -> str:
+    """
+    Empreinte de la version testée : processus Studio déployés, commits du client à la référence, Standard, copie de
+    référence (date et signature de version : une nouvelle copie relance l'analyse de la configuration).
+    """
     import hashlib
     import json
     data = {"studio": sorted((c["nom"], str(c.get("version")), c.get("statut", "")) for c in components),
-            "client": client_commits, "standard": std_version, "analyse": ANALYSIS_VERSION}
+            "client": client_commits, "standard": std_version, "analyse": ANALYSIS_VERSION,
+            "configuration": configuration or {}}
     return hashlib.sha256(json.dumps(data, sort_keys=True).encode("utf-8")).hexdigest()[:16]
 
 
@@ -425,7 +430,23 @@ def report_lines(result: dict) -> list:
                          + (f":{a['ligne']}" if a["ligne"] else "") + f" — impact : {a['impact']}")
         for key, why in sorted((code.get("non_verifies") or {}).items())[:15]:
             lines.append(f"- [non vérifié] {key} : {why}")
+    config = result.get("config")
+    if config is not None:
+        lines.append(f"Configuration (copie de référence) : {config.get('controles', 0)} colonne(s) lue(s), "
+                     f"{len(config.get('branchements') or [])} branchement(s) externe(s), "
+                     f"{len(config.get('anomalies') or [])} anomalie(s), {len(config.get('non_verifies') or {})} "
+                     f"élément(s) non vérifié(s).")
+        for a in config.get("anomalies") or []:
+            lines.append(f"- [{a['classe']}] {a['anomalie']} — {a['fichier']} — action : {a['action']}")
+        for key, why in sorted((config.get("non_verifies") or {}).items())[:15]:
+            lines.append(f"- [non vérifié] {key} : {why}")
     return lines
+
+
+def all_anomalies(result: dict) -> list:
+    """Anomalies des trois analyses (Studio, code du client, configuration)."""
+    return (list(result.get("anomalies") or []) + list((result.get("code") or {}).get("anomalies") or [])
+            + list((result.get("config") or {}).get("anomalies") or []))
 
 
 def main(argv=None) -> int:
@@ -454,9 +475,9 @@ def main(argv=None) -> int:
         std = None
     from tools import cucumber_anticipation_code
     result = cucumber_anticipation_code.analyse_all(studio_components(schema), cucumber_tools.git_repos(args.client_root),
-                                                    ref, schema, std, _std_candidates, cucumber_copied_config.copy_query)
+                                                    ref, schema, std, _std_candidates, cucumber_copied_config.copy_rows)
     print("\n".join(report_lines(result)))
-    return 1 if result["anomalies"] or result["code"]["anomalies"] else 0
+    return 1 if all_anomalies(result) else 0
 
 
 if __name__ == "__main__":

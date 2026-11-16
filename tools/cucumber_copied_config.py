@@ -163,16 +163,38 @@ def check_business_data(worktree: str, files: list, profile: dict, query=None) -
     return errors
 
 
-def copy_query(sql: str, schema: str) -> list:
+def copy_query(sql: str, schema: str, limit: int = MAX_CODES) -> list:
     """Requête de lecture dans la copie (base des tests, profil « cucumber » de db_tools) : lignes [{"code": …}]."""
     from tools import db_tools
     previous = db_tools.set_profile("cucumber")
     try:
-        out = db_tools.run_query(sql, schema, limit=MAX_CODES)
+        out = db_tools.run_query(sql, schema, limit=limit)
     finally:
         db_tools.set_profile(previous)
     rows = [line.split(" | ") for line in out.splitlines()[1:-1]]
     return [{"code": r[0].strip()} for r in rows if r]
+
+
+def copy_rows(sql: str, schema: str, limit: int = 20000) -> list:
+    """
+    Requête de lecture dans la copie sans la mise en forme de db_tools : première colonne de chaque ligne en entier
+    (ni plafond de 200 lignes, ni cellule tronquée ; binaire en hexadécimal) — [{"code": …}]. Analyses statiques.
+    """
+    from tools import db_tools
+    previous = db_tools.set_profile("cucumber")
+    try:
+        executed = db_tools.validate_select(sql, db_tools.get_db_config()["type"])
+        with db_tools.readonly_connection(schema) as conn:
+            rows = conn.exec_driver_sql(db_tools.driver_sql(executed, conn.dialect.paramstyle)).fetchmany(limit)
+    finally:
+        db_tools.set_profile(previous)
+    out = []
+    for row in rows:
+        value = row[0]
+        if isinstance(value, (bytes, bytearray, memoryview)):
+            value = bytes(value).hex()
+        out.append({"code": "NULL" if value is None else str(value)})
+    return out
 
 
 def checker_for(profile: dict):
@@ -669,6 +691,18 @@ def external_connections(schema: str, query) -> list:
             from tools import secret_tools
             host = secret_tools.mask_secrets((_URL_HOST.match(url.strip()) or [None, ""])[1])[0]
             found.append({"type": kind, "table": table, "code": code, "hote": host, "neutralisation": action})
+    # Toutes les autres tables de configuration (colonnes d'adresse, d'hôte, d'URL, de file…) : relevé générique de
+    # l'analyse d'anticipation 1.c, pour tous les clients
+    try:
+        from tools import cucumber_anticipation_config as config
+        known = {table for _kind, table, _column, _action in EXTERNAL_CONNECTIONS}
+        for c in config.external_connections(config.Schema(schema, query)):
+            if c["table"] not in known:
+                found.append({"type": c["categorie"], "table": f"{c['table']}.{c['colonne']}", "code": c["code"],
+                              "hote": c["hote"], "neutralisation": "à neutraliser dans l'init de la configuration "
+                                                                   "copiée (adresse de test ou échange désactivé)"})
+    except Exception:  # noqa: BLE001 - relevé générique illisible : branchements connus seulement
+        pass
     return found
 
 
