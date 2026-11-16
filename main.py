@@ -18,7 +18,7 @@ import requests
 from dotenv import load_dotenv
 
 from tools import env_tools, secret_tools, cucumber_cost, cucumber_lessons
-from tools import cucumber_env_diagnosis, cucumber_copied_config, cucumber_anticipation, cucumber_anticipation_code
+from tools import cucumber_env_diagnosis, cucumber_copied_config, cucumber_anticipation, cucumber_anticipation_code, cucumber_business_rules
 from tools import bitbucket_std, client_version, cucumber_a_revoir, cucumber_arbitrage, cucumber_compile, cucumber_db_proof, cucumber_fix_budget, cucumber_stray, cucumber_incidents, cucumber_init_fix, cucumber_isolation, cucumber_lock, cucumber_routes, cucumber_test_data, cucumber_test_selection, cucumber_jobs, cucumber_modules, cucumber_delivery, cucumber_library, cucumber_library_upgrade, standard_version, cucumber_bilan, cucumber_checks, cucumber_coverage, cucumber_data_rules, cucumber_disabled, cucumber_guard, cucumber_job, cucumber_decisions, cucumber_detection, cucumber_diagnostic, cucumber_failures, cucumber_environment, cucumber_rules, cucumber_run, cucumber_testability, cucumber_preflight, cucumber_results, cucumber_links, cucumber_server_logs, groundcover_tools, mcp_servers, cucumber_import, cucumber_init, cucumber_recreation, cucumber_init_data, cucumber_initializers, cucumber_profile, cucumber_tools, cucumber_verify, cucumber_versions, cucumber_wait_steps, db_tools, integration_tools, knowledge_tools, pr_review, assistant, db_restore, jenkins_tools, skills
 from tools.jira_cli import attach_files, create_or_get_issue
 from tools.epic_tools import (
@@ -2283,7 +2283,42 @@ def test_selection_block(client: str, worktree: str, files: list = ()) -> str:
         print(f"[DONNÉES DE TEST] Choisies sans IA dans {schema.strip()} : réserves vides "
               f"{', '.join(r['code'] for r in selection['reserves'][:3])}… (secteur {selection['secteur'] or '?'})"
               + (f", préfixe GS1 {selection['gs1']}" if selection.get("gs1") else ""))
-    return cucumber_test_selection.prompt_block(selection, copied)
+    return cucumber_test_selection.prompt_block(selection, copied) + business_rules_block(profile, worktree, files)
+
+
+def business_rules_source(profile: dict) -> tuple:
+    """(schéma de référence, date de la copie) des règles métier ; ('', '') si CUCUMBER_BUSINESS_RULES=0 ou sans schéma."""
+    if os.getenv("CUCUMBER_BUSINESS_RULES", "1").strip() == "0":
+        return "", ""
+    copied = cucumber_copied_config.active(profile)
+    schema = ((cucumber_copied_config.test_schema(profile) if copied else "")
+              or os.getenv("CUCUMBER_DB_SCHEMA", "")).strip()
+    return schema, (cucumber_copied_config.reference(profile).get("date", "") if copied else "")
+
+
+def business_rules_block(profile: dict, worktree: str, files: list = ()) -> str:
+    """Bloc « RÈGLES MÉTIER DU CLIENT » (cucumber_business_rules, 0 token) : consignes et analyse des features du lot."""
+    schema, since = business_rules_source(profile)
+    if not schema:
+        return ""
+    try:
+        return cucumber_business_rules.prompt_block(worktree, list(files or []), schema,
+                                                    cucumber_copied_config.copy_rows, since)
+    except Exception as e:  # noqa: BLE001 - base illisible : consignes seules
+        print(f"[RÈGLES MÉTIER] Analyse impossible ({str(e)[:160]}) : consignes seules.")
+        return cucumber_business_rules.GUIDANCE
+
+
+def business_rules_errors(profile: dict, worktree: str, files: list) -> list:
+    """Erreurs de lot de l'axe B (cucumber_business_rules.check_files) ; base illisible : aucune (jamais bloquant)."""
+    schema, since = business_rules_source(profile)
+    if not schema:
+        return []
+    try:
+        return cucumber_business_rules.check_files(worktree, files, schema, cucumber_copied_config.copy_rows, since)
+    except Exception as e:  # noqa: BLE001
+        print(f"[RÈGLES MÉTIER] Contrôle impossible ({str(e)[:160]}).")
+        return []
 
 
 ANTICIPATION_FILE = "anticipation.json"
@@ -3263,6 +3298,9 @@ def check_cucumber_lot(client: str, label: str, worktree: str, base: str, cucumb
                             or os.getenv("CUCUMBER_DB_SCHEMA", "")).strip()
         errors += cucumber_test_selection.missing_transport(worktree, files, transport_schema,
                                                             cucumber_copied_config.copy_query)
+    # Règles métier du client (axe B) : besoin attendu avant l'action contredit par une règle active ou sans cas réel
+    # dans la base de référence → erreur de lot, avant tout run
+    errors += business_rules_errors(own_profile, worktree, files)
     # Leçons du client : contrôles déterministes (0 token)
     errors += cucumber_lessons.check_files(worktree, files, cucumber_lessons.load(client))
     # Un test vérifié vert n'est jamais réécrit (empreinte figée à sa vérification)
