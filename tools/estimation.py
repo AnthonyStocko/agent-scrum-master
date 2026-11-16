@@ -170,14 +170,22 @@ def _fmt(value: float) -> str:
     return (f"{value:.2f}".rstrip("0").rstrip(".") if value is not None else "?").replace(".", ",")
 
 
-def normalize(text: str) -> tuple:
+def normalize(text: str, unit: str = "") -> tuple:
     """
-    (texte, corrigé ?) : ligne « Total » du tableau recalculée (somme des activités), ajoutée si absente. Aucune IA :
-    le total publié est toujours la somme des activités.
+    (texte, corrigé ?) : ligne « Total » du tableau recalculée (somme des activités), ajoutée si absente ; unité du
+    projet écrite sous le titre si la section ne la donne pas. Aucune IA : le total publié est toujours la somme des
+    activités.
     """
     parsed = parse(text)
     if not parsed["lignes"]:
         return text, False
+    if unit and not parsed["unite"]:
+        start, _end = section_bounds(text)
+        lines = text.splitlines()
+        lines[start + 1:start + 1] = ["", f"Unité : {unit}."]
+        text = "\n".join(lines) + ("\n" if text.endswith("\n") else "")
+        fixed, _changed = normalize(text)
+        return fixed, True
     expected = totals(parsed)
     total = parsed["total"]
     if total and all(abs((total[k] or 0) - expected[k]) < 0.01 for k in expected):

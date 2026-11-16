@@ -51,6 +51,11 @@ def test_section_is_read_and_the_total_is_always_the_sum_of_activities():
     broken = fixed.replace("| 0,5 | 1 | 1,5 | 2 scénarios", "| 2 | 1 | 1,5 | 2 scénarios")
     assert any("basse ≤ probable ≤ haute" in p for p in estimation.check(broken, config))
     assert estimation.check("# Cadrage\n\n## Partie 2\n", config) == ["section « Chiffrage » absente"]
+    # Unité absente de la section : écrite sous le titre (unité du projet), jamais signalée à tort
+    no_unit = fixed.replace("Unité : jours-homme.\n", "")
+    assert "unité attendue : jours-homme" in estimation.check(no_unit, config)
+    with_unit, changed = estimation.normalize(no_unit, "jours-homme")
+    assert changed and estimation.check(with_unit, config) == []
 
 
 def test_project_settings_unit_field_and_activities(monkeypatch):

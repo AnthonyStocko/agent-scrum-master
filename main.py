@@ -2362,11 +2362,11 @@ def finalize_estimation(path: str, project: str) -> None:
     text = _read_text(path)
     if not text or os.getenv("ESTIMATION_ENABLED", "1").strip() == "0":
         return
-    fixed, changed = estimation.normalize(text)
+    fixed, changed = estimation.normalize(text, estimation.settings(project)["unite"])
     if changed:
         with open(path, "w", encoding="utf-8") as f:
             f.write(fixed)
-        print(f"[CHIFFRAGE] {path} : total recalculé (somme des activités).")
+        print(f"[CHIFFRAGE] {path} : total recalculé (somme des activités) et unité du projet.")
     problems = estimation.check(fixed, estimation.settings(project))
     if problems:
         print(f"[CHIFFRAGE] ⚠️ {path} : " + " ; ".join(problems))

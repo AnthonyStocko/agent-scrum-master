@@ -242,6 +242,8 @@ def show_estimation(text: str, project: str) -> None:
     if not text or os.getenv("ESTIMATION_ENABLED", "1").strip() == "0":
         return
     config = estimation.settings(project)
+    # Total et unité recalculés sans IA à chaque écriture : seuls les autres manques sont signalés
+    text = estimation.normalize(text, config["unite"])[0]
     parsed = estimation.parse(text)
     problems = estimation.check(text, config)
     if parsed["lignes"]:
@@ -251,6 +253,26 @@ def show_estimation(text: str, project: str) -> None:
                    f"({config['champ']}) seulement à la validation de l'analyse.")
     if problems:
         st.warning("Chiffrage à compléter : " + " ; ".join(problems), icon=":material/calculate:")
+
+
+def show_epic_estimation(tasks: list, project: str) -> None:
+    """Chiffrage de l'épopée : total de chaque tâche et total général (somme des tâches), sans changer le découpage."""
+    from tools import estimation
+    if not tasks or os.getenv("ESTIMATION_ENABLED", "1").strip() == "0":
+        return
+    texts = []
+    for index, task in enumerate(tasks, 1):
+        path = task_file(task)
+        text = ""
+        if path and os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+        texts.append((f"{task.get('key') or f'Tâche {index}'} — {task.get('summary', '')}", text))
+    missing = [title for title, text in texts if not estimation.parse(text)["lignes"]]
+    st.markdown(estimation.epic_summary(texts, project))
+    if missing:
+        st.caption("Sans chiffrage : " + ", ".join(missing) + " — demandez une révision (ex. « Ajoute le chiffrage de "
+                   "chaque tâche, ne modifie pas le découpage »).")
 
 
 def show_publication_status(issue_key: str, text: str = None) -> None:
@@ -905,11 +927,14 @@ if PAGE == "lancement":
                 else:
                     st.markdown(":orange[:material/edit_note: Brouillon : tâche créée dans Jira à la validation "
                                 "du découpage.]")
+                show_estimation(task_content, active_project)
                 task_edits[path] = (task.get("key", ""), task_content, st.text_area(
                     f"Analyse de {label} (Modifiable directement avant validation) :",
                     value=task_content,
                     height=300
                 ))
+
+        show_epic_estimation(review_tasks, active_project)
 
         def save_task_edits():
             """Corrections manuelles enregistrées localement (fichier, mémoire) ; publiées à la validation."""
