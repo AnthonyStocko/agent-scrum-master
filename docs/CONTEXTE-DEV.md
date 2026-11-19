@@ -94,6 +94,11 @@ py -3.12 -m venv .venv
   `.venv\Scripts\python.exe -m tools.token_report [--depuis AAAA-MM-JJ] [--ticket CLE] [--etape cucumber]`.
   C'est la référence pour juger les évolutions du contexte et de la mémoire (corrections, mémoire par spécifique,
   prévention avant écriture).
+- **Dossier de passation** (`tools/cucumber_handover.py`, `CUCUMBER_HANDOVER`, défaut 1) : les corrections après
+  exécution partent en session neuve (`cucumber_followup(..., fresh=True)`) ; ce qui doit survivre d'une tentative
+  à l'autre est dans `lot["passation"][tag]` (cause, preuves base, hypothèses, résultat au run suivant), injecté
+  dans le prompt de la tentative suivante et de l'analyse du dernier run. Toute nouvelle information utile à une
+  correction suivante passe par ce dossier, pas par la reprise de session.
 
 ## 3. Prompts, outils et évals
 
