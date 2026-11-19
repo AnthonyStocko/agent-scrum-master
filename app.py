@@ -13,7 +13,7 @@ import logging
 
 from dotenv import dotenv_values, load_dotenv
 
-from tools import auth_tools, env_tools
+from tools import auth_tools, config_commune, env_tools
 from tools import client_version, cucumber_delivery, cucumber_incidents, cucumber_init_fix, cucumber_library_upgrade, cucumber_lock, cucumber_modules, cucumber_test_data, standard_version, standard_version_task
 from tools import (cucumber_a_revoir, cucumber_java21, cucumber_simple, cucumber_audit, cucumber_bilan, cucumber_checks, cucumber_coverage, cucumber_job,
                    cucumber_decisions, cucumber_detection, cucumber_environment, cucumber_failures, cucumber_import,
@@ -424,6 +424,8 @@ os.environ.setdefault("AGENT_SHELL_CLAUDE_CONFIG_DIR", os.environ.get("CLAUDE_CO
 # Lignes du .env en défaut : un message clair au démarrage (numéros de ligne) au lieu des avertissements bruts
 logging.getLogger("dotenv.main").setLevel(logging.ERROR)
 load_dotenv(ENV_PATH, override=True)
+# Lancé par agent-manager-savoye : ses accès et secrets l'emportent sur le .env (tools/config_commune.py)
+config_commune.reappliquer()
 if not os.getenv("CLAUDE_CONFIG_DIR", "").strip():
     os.environ["CLAUDE_CONFIG_DIR"] = os.environ["AGENT_SHELL_CLAUDE_CONFIG_DIR"]
 
@@ -4716,6 +4718,10 @@ if PAGE == "configuration":
     render_estimation_settings()
     st.caption("Modifiez l'ensemble des variables d'environnement utilisées par l'application. "
                "Le fichier .env.example du projet donne les valeurs usuelles.")
+    if config_commune.gerees():
+        st.info("Lancé par le manager : ces variables viennent de sa configuration commune et se modifient dans le "
+                "manager (onglet Configuration › Accès) ; elles ne sont pas réécrites dans le .env : "
+                + ", ".join(config_commune.gerees()) + ".", icon=":material/hub:")
 
     with st.form("env_form_global"):
         # Valeurs enregistrées dans le .env à la validation du formulaire
@@ -5358,7 +5364,7 @@ if PAGE == "configuration":
             try:
                 env_tools.write_env(ENV_PATH, {
                     name: value if name.endswith(("_TOKEN", "_SECRET", "_PASSWORD", "_API_KEY")) else value.strip()
-                    for name, value in env_values.items()})
+                    for name, value in env_values.items() if not config_commune.geree(name)})
             except ValueError as e:
                 st.error(f"Configuration non enregistrée correctement : {e}.")
             else:
