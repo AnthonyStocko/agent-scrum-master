@@ -26,7 +26,7 @@ from tools.epic_tools import (
     sync_epic_tasks, attach_existing_analyses, missing_analyses,
 )
 from tools import (analysis_publication, cucumber_java21, cucumber_repo_setup, cucumber_simple, cucumber_simple_init,
-                   jira_guard)
+                   jira_guard, odatio_docs)
 from tools.jira_tools import (
     fetch_application_tickets, find_jira_issue_by_summary, get_epic_children, get_full_jira_issue_context,
     get_jira_issue_details,
@@ -135,10 +135,41 @@ def render_prompt(name: str, **values) -> str:
     if not path:
         sys.exit(f"[PROMPTS] ❌ Modèle de prompt '{name}.md' introuvable (PROMPTS_DIR='{custom_dir}', {DEFAULT_PROMPTS_DIR}).")
     try:
-        return Template(_read_text(path)).substitute(values)
+        return Template(_read_text(path)).substitute({**OPTIONAL_PROMPT_VALUES, **values})
     except (KeyError, ValueError) as e:
         sys.exit(f"[PROMPTS] ❌ Modèle '{path}' invalide : variable inconnue ou '$' isolé ({e}). "
                  f"Variables disponibles : {', '.join(sorted(values)) or 'aucune'}.")
+
+
+# Blocs facultatifs des modèles : vides quand l'appel ne les fournit pas (ex. doc ODATiO non transmise à un appel)
+OPTIONAL_PROMPT_VALUES = {"odatio_docs_block": ""}
+
+# Documentation développeur ODATiO (tools/odatio_docs.py) : lecture seule, limitée au site de ODATIO_DOCS_URL
+ODATIO_DOCS_CLI = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools", "odatio_docs.py")
+ODATIO_DOCS_USAGE = {
+    "analyse": "l'analyse et le cadrage du ticket et son chiffrage",
+    "patch": "le développement du patch et la correction du code",
+    "revue": "la relecture des pull requests",
+    "cucumber": "la génération et la correction des tests Cucumber",
+}
+ODATIO_DOCS_STEPS = {"cadrage": "analyse", "refine": "analyse", "cadrage-reponses": "analyse",
+                     "epic-cadrage": "analyse", "patch": "patch"}
+
+
+def odatio_docs_block(python_exe: str, usage: str) -> str:
+    """Consigne de consultation de la doc ODATiO (prompts/odatio_docs.md) ; '' si ODATIO_DOCS_URL est vide."""
+    if not odatio_docs.enabled():
+        return ""
+    return "\n" + render_prompt("odatio_docs", cli=f'"{python_exe}" "{ODATIO_DOCS_CLI}"', docs_url=odatio_docs.base_url(),
+                                usage=ODATIO_DOCS_USAGE.get(usage, usage),
+                                max_consultations=str(_env_int("ODATIO_DOCS_MAX_CONSULTATIONS", 6))).strip() + "\n"
+
+
+def odatio_docs_tools(python_exe: str) -> list:
+    """Motifs --allowedTools de l'outil de la doc ODATiO (seule commande autorisée) ; [] si la doc est désactivée."""
+    if not odatio_docs.enabled():
+        return []
+    return [f"Bash({python_exe} {ODATIO_DOCS_CLI}:*)", f'Bash("{python_exe}" "{ODATIO_DOCS_CLI}":*)']
 
 
 def format_jira_context(jira_context: dict, max_chars: int) -> str:
@@ -829,6 +860,7 @@ def run_pr_review(pr_urls: list, feature: str = "") -> int:
     prompt = render_prompt(
         "pr_review", relecteur=os.getenv("JIRA_EMAIL", "").split("@")[0] or "l'utilisateur", nb_prs=len(prs),
         token_saving_rules="\n" + render_prompt("token_saving_rules"),
+        odatio_docs_block=odatio_docs_block(sys.executable, "revue"),
         fonctionnalite=(f"{feature} — " if feature else "") + prs[0]["titre"],
         jira="\n\n".join(tickets) or "(aucun ticket cité dans les titres, branches ou descriptions)",
         prs="\n".join(blocks),
@@ -844,7 +876,9 @@ def run_pr_review(pr_urls: list, feature: str = "") -> int:
     model = os.getenv("CLAUDE_MODEL_REVIEW", "").strip() or "sonnet"
     effort = claude_effort("CLAUDE_EFFORT_REVIEW")
     turns = _env_int("REVIEW_MAX_TURNS", 40) + 15 * (len(prs) - 1)
-    returncode, output, usage, limit_hit = run_claude(prompt, model, list(dict.fromkeys(dirs)), REVIEW_TOOLS,
+    # Lecture seule : outils de lecture, plus la seule commande de la doc ODATiO si elle est configurée
+    returncode, output, usage, limit_hit = run_claude(prompt, model, list(dict.fromkeys(dirs)),
+                                                      REVIEW_TOOLS + odatio_docs_tools(sys.executable),
                                                       extra_args=("--max-turns", str(turns)), cwd=run_dir,
                                                       effort=effort, lean=lean_session())
     report_token_usage(f"REVUE-{feature or prs[0]['repere']}", "review-pr", model, usage, len(prompt), returncode,
@@ -1774,11 +1808,14 @@ def main():
         jira_fetch_step = f"Récupère les détails du ticket Jira cible {target_issue}."
 
     release_note_step = render_prompt("release_note", release_note_file=release_note_file).strip()
+    # Documentation développeur ODATiO : analyse, cadrage, chiffrage et patch (hors génération Cucumber d'un client)
+    docs_block = "" if is_cucumber_client or args.step not in ODATIO_DOCS_STEPS else odatio_docs_block(
+        python_exe, ODATIO_DOCS_STEPS[args.step])
 
     # Variables communes des modèles de prompts (prompts/*.md)
     prompt_values = {
         "token_saving_rules": token_saving_rules, "capitalization_block": capitalization_block, "db_block": db_block,
-        "knowledge_block": knowledge_block,
+        "knowledge_block": knowledge_block, "odatio_docs_block": docs_block,
         "target_issue": target_issue, "target_project": target_project, "conventions_path": conventions_path,
         "branch_rule": branch_rule, "repo_scope": repo_scope, "jira_fetch_step": jira_fetch_step,
         "cucumber_instruction": cucumber_instruction, "release_note_step": release_note_step,
@@ -1918,6 +1955,9 @@ def main():
     # Modèle de prompt sans ${knowledge_block} (prompt personnalisé, besoin...) : le bloc est ajouté en fin de prompt
     if shared["bloc"] and shared["bloc"] not in prompt:
         prompt += knowledge_block
+    # Même repli pour la consigne de la doc ODATiO (cadrage_reponses.md, prompts personnalisés)
+    if docs_block and docs_block.strip() not in prompt:
+        prompt += docs_block
     # Socle seul lu dans Bitbucket : la consigne d'accès au code vaut pour toutes les étapes (patch compris)
     if not jira_only and remote_code and repo_scope not in prompt:
         prompt += "\n\n=== CODE DU STANDARD ===\n" + repo_scope
@@ -2252,7 +2292,9 @@ def lot_tools(values: dict) -> list:
     """
     if values.get("db_block") or values.get("logs_block") or values.get("compilation_agent"):
         return CUCUMBER_TOOLS + [f"Bash({sys.executable}:*)", f'Bash("{sys.executable}":*)']
-    return CUCUMBER_TOOLS + [f"Bash({sys.executable} {XLSM_TOOL}:*)", f'Bash("{sys.executable}" "{XLSM_TOOL}":*)']
+    # Doc ODATiO transmise à l'appel (odatio_docs_block) : sa seule commande en plus
+    docs = odatio_docs_tools(sys.executable) if values.get("odatio_docs_block") else []
+    return CUCUMBER_TOOLS + [f"Bash({sys.executable} {XLSM_TOOL}:*)", f'Bash("{sys.executable}" "{XLSM_TOOL}":*)'] + docs
 
 
 def db_summary(entries: list) -> str:
@@ -7562,6 +7604,9 @@ def run_cucumber_client(args, work_key: str, local_client_repo: str, local_std_r
         "donnees_test": cucumber_test_data.prompt_block(profile) + cucumber_lessons.prompt_block(client)
         + test_selection_block(client, worktree) + cleanup_block(),
         "knowledge_block": f"\n{shared['bloc']}\n" if shared["bloc"] else "",
+        # Documentation développeur ODATiO (lecture seule) : partie variable des lots, corrections et revue (le prompt
+        # système des lots, en cache, n'en dépend pas)
+        "odatio_docs_block": odatio_docs_block(sys.executable, "cucumber"),
         # Accès base en lecture seule de tous les lots et de leurs corrections (--db-schema), journalisé par lot
         # Base de l'environnement où Jenkins joue les tests (CUCUMBER_DB_*), à défaut la base DB_*
         "db_block": build_db_block(args.db_schema.strip(), python_exe, workspace_dir,
