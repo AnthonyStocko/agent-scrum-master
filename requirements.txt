@@ -9,3 +9,6 @@ psycopg2-binary>=2.9   # PostgreSQL
 # pymssql              # SQL Server (ou pyodbc + pilote ODBC Microsoft, cf. DB_ODBC_DRIVER)
 # pymysql              # MySQL
 openpyxl>=3.1
+
+# Serveur MCP en lecture seule pour agent-manager-savoye (mcp_lecture.py)
+mcp>=2,<3
