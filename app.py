@@ -4919,6 +4919,13 @@ if PAGE == "configuration":
             help="Fichier Markdown des conventions de développement. "
                  "Vide = odatio-specific-code-conventions-dev.md du projet."
         )
+        env_values["ODATIO_DOCS_URL"] = st.text_input(
+            "ODATIO_DOCS_URL",
+            value=os.getenv("ODATIO_DOCS_URL", ""),
+            help="Page d'accueil de la documentation développeur ODATiO (https), consultée en lecture seule par "
+                 "l'agent (cadrage, chiffrage, patch, revue de PR, tests Cucumber), limitée à ce site. "
+                 "Vide = documentation non consultée."
+        )
         env_values["PROMPTS_DIR"] = st.text_input(
             "PROMPTS_DIR",
             value=os.getenv("PROMPTS_DIR", ""),
