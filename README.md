@@ -291,6 +291,14 @@ l'onglet ⚙️ Configuration les signale et ne les réécrit pas dans le `.env`
 (onglet Configuration › Accès), puis il suffit de redémarrer l'agent depuis le manager. Les réglages propres à
 cet agent (Cucumber, modèles, base de travail…) restent dans son `.env`. Lancé seul, rien ne change.
 
+### Serveur MCP en lecture seule (manager)
+
+`mcp_lecture.py` est le serveur MCP qu'interroge agent-manager-savoye pour répondre à une question rapide sans
+ouvrir l'IHM : analyses présentes et état (publiée ou brouillon à valider), ticket Jira (titre, statut,
+responsable, épopée ; avec le compte de lecture `JIRA_READ_*` s'il est configuré), clients Cucumber et génération
+en cours, derniers builds Jenkins des jobs Cucumber. **Rien n'y écrit.** Le manager le lance lui-même avec le venv
+de l'agent ; ne le déclare pas dans un `.mcp.json` à la racine, que le CLI `claude` de l'agent chargerait.
+
 ## Connaissances partagées
 
 Chaque analyse de l'agent est déposée en Markdown dans un répertoire commun (partage réseau d'entreprise), puis consultée avant les analyses suivantes, par vous comme par vos collègues. C'est un complément de la mémoire locale (`.tmp/memory`, propre à chaque poste), qui reste inchangée. Le code est dans `tools/knowledge_tools.py` ; le masquage des secrets, commun à tout l'agent, dans `tools/secret_tools.py`.

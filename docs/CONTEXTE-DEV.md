@@ -81,6 +81,10 @@ py -3.12 -m venv .venv
   l'emportent sur le `.env`, et l'onglet Configuration ne les y réécrit pas. `main.py`, `webhook_server.py` et
   `tools/db_tools.py` chargent le `.env` sans `override` : l'environnement hérité l'emporte déjà. Lancé seul,
   rien ne change.
+- **`mcp_lecture.py`** : serveur MCP stdio en lecture seule pour le manager (`tools/lecture_manager.py` :
+  analyses, ticket, Cucumber, builds Jenkins). Aucune écriture (vérifié par `tests/test_lecture_manager.py`).
+  Tout affichage des outils part sur stderr, stdout étant le canal MCP. Ne jamais le déclarer dans un `.mcp.json`
+  à la racine.
 
 ## 3. Prompts, outils et évals
 
