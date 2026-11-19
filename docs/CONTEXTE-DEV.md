@@ -99,6 +99,12 @@ py -3.12 -m venv .venv
   à l'autre est dans `lot["passation"][tag]` (cause, preuves base, hypothèses, résultat au run suivant), injecté
   dans le prompt de la tentative suivante et de l'analyse du dernier run. Toute nouvelle information utile à une
   correction suivante passe par ce dossier, pas par la reprise de session.
+- **Mémoire par spécifique** (`tools/cucumber_spec_memory.py`, `CUCUMBER_SPEC_MEMORY`, défaut 1) : à la fin de
+  chaque lot (après `cucumber_results.record_lot`), ce que la génération a établi pour chaque spécifique est ajouté
+  à `.tmp/cucumber/<client>/memoire_specifiques.json` (5 générations au plus), à partir de l'état du lot seul
+  (exécution, `a_revoir`, `passation`, `correction.restantes_detail`, `decisions_en_attente`, `arret`). Injecté
+  dans `prompts/cucumber_client_lot.md` (`${memoire}`). Les scénarios sont rattachés à leur spécifique par
+  `lot["indicateurs"]` ; un lot d'un seul spécifique lui rattache tout.
 
 ## 3. Prompts, outils et évals
 

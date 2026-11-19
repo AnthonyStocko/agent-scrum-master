@@ -17,7 +17,7 @@ from urllib.parse import urlsplit
 import requests
 from dotenv import load_dotenv
 
-from tools import env_tools, secret_tools, cucumber_cost, cucumber_lessons, estimation, token_measure, cucumber_handover
+from tools import env_tools, secret_tools, cucumber_cost, cucumber_lessons, estimation, token_measure, cucumber_handover, cucumber_spec_memory
 from tools import cucumber_env_diagnosis, cucumber_copied_config, cucumber_anticipation, cucumber_anticipation_code, cucumber_business_rules, cucumber_cleanup
 from tools import bitbucket_std, client_version, cucumber_a_revoir, cucumber_arbitrage, cucumber_compile, cucumber_db_proof, cucumber_fix_budget, cucumber_stray, cucumber_incidents, cucumber_init_fix, cucumber_isolation, cucumber_lock, cucumber_routes, cucumber_test_data, cucumber_test_selection, cucumber_jobs, cucumber_modules, cucumber_delivery, cucumber_library, cucumber_library_upgrade, standard_version, cucumber_bilan, cucumber_checks, cucumber_coverage, cucumber_data_rules, cucumber_disabled, cucumber_guard, cucumber_job, cucumber_decisions, cucumber_detection, cucumber_diagnostic, cucumber_failures, cucumber_environment, cucumber_rules, cucumber_run, cucumber_testability, cucumber_preflight, cucumber_results, cucumber_links, cucumber_server_logs, groundcover_tools, mcp_servers, cucumber_import, cucumber_init, cucumber_recreation, cucumber_init_data, cucumber_initializers, cucumber_profile, cucumber_tools, cucumber_verify, cucumber_versions, cucumber_wait_steps, db_tools, integration_tools, knowledge_tools, pr_review, assistant, db_restore, jenkins_tools, skills
 from tools.jira_cli import attach_files, create_or_get_issue
@@ -7763,6 +7763,7 @@ def run_cucumber_client(args, work_key: str, local_client_repo: str, local_std_r
                                        cucumber_profile.profile_block(profile, gap_file=gap_file,
                                                                       known=cucumber_testability.load_index(client)),
                                        cucumber_testability.answers_block(profile)])),
+                                   memoire=cucumber_spec_memory.block(client, lot["ids"], cucumber_cost.load(client)),
                                    lot_label=label)
             # Accès limité au dossier de travail du client (worktree, sources, extraits Jira) et aux catalogues
             returncode, output, usage, limit_hit = run_cucumber_claude(prompt, model, lot_tools(fixed_values),
@@ -7868,6 +7869,9 @@ def run_cucumber_client(args, work_key: str, local_client_repo: str, local_std_r
                    else None)
         # Résultat obligatoire de la génération de chaque tâche du lot (carte de la tâche)
         cucumber_results.record_lot(state, lot)
+        # Mémoire par spécifique (causes ouvertes, pistes écartées, hypothèses, décisions) pour la génération suivante
+        cucumber_spec_memory.record_lot(client, lot, state.get("generations"),
+                                        {i: (specifics.get(i) or {}).get("libelle", "") for i in lot["ids"]})
         # Coût de cette exécution du lot, cumulé par spécifique (conservé d'une génération à l'autre)
         lot["cout_execution"] = round(cucumber_cost.run_cost(lot), 4)
         cumulated = cucumber_cost.record_lot_run(client, lot, state.get("debut", ""))
