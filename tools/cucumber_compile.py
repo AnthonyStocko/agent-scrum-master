@@ -3,7 +3,9 @@ Compilation du worktree Cucumber d'un client, appelée par l'agent d'un lot pend
 cette seule commande) : il voit ses erreurs et les corrige lui-même, avec tout le contexte du lot, au lieu de les
 laisser à un appel de correction séparé.
 
-    python tools/cucumber_compile.py <client>            compile (test-compile) et vérifie les appels à la bibliothèque
+    python tools/cucumber_compile.py <client>            compile (test-compile) et vérifie les appels à la bibliothèque,
+                                                         puis les colonnes de DataTable des features du lot
+                                                         (cucumber_prevention, colonnes_std.json)
     python tools/cucumber_compile.py <client> --api <Classe>   méthodes de la classe dans la version du pom du client
 
 Le contexte (worktree, clone du Cucumber Standard, commande Maven) est écrit par main.py dans
@@ -18,7 +20,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tools import cucumber_library, cucumber_tools  # noqa: E402
+from tools import cucumber_library, cucumber_prevention, cucumber_tools  # noqa: E402
 
 CONTEXT_FILE = "compilation.json"
 STOPPED = 3
@@ -80,10 +82,20 @@ def main(argv: list) -> int:
               "code) : ne relance pas, ne livre rien, signale-le dans ta réponse.")
         print("\n".join(f"  {e}" for e in check["erreurs"][:5]))
         return STOPPED
-    if check["ok"] and not wrong_calls:
+    try:
+        # Colonnes de DataTable inconnues du Standard pour le step (contrôle refait après le lot)
+        columns = cucumber_prevention.agent_column_errors(client, context["worktree"])
+    except Exception:  # contrôle au mieux : jamais d'arrêt de l'agent pour lui
+        columns = []
+    if check["ok"] and not wrong_calls and not columns:
         print(f"COMPILATION OK (bibliothèque {version or '?'} du pom du client)")
         return 0
-    errors = list(dict.fromkeys(wrong_calls + check["erreurs"]))
+    if check["ok"] and not wrong_calls:
+        print(f"COMPILATION OK, mais CONTRÔLE DES FEATURES KO : {len(columns)} colonne(s) de DataTable jamais utilisée(s) "
+              f"au Standard pour leur step (refusées aussi après le lot) — corrige avant de rendre ton JSON :")
+        print("\n".join(f"- {e}" for e in columns))
+        return 1
+    errors = list(dict.fromkeys(wrong_calls + check["erreurs"] + columns))
     print(f"COMPILATION KO : {len(errors)} erreur(s) (chemins relatifs au worktree ; bibliothèque {version or '?'} du "
           f"pom du client)")
     print("\n".join(f"- {e}" for e in errors))
