@@ -85,6 +85,12 @@ py -3.12 -m venv .venv
   analyses, ticket, Cucumber, builds Jenkins). Aucune écriture (vérifié par `tests/test_lecture_manager.py`).
   Tout affichage des outils part sur stderr, stdout étant le canal MCP. Ne jamais le déclarer dans un `.mcp.json`
   à la racine.
+- **Liens préremplis du manager** (`tools/lien_manager.py`, `app.apply_manager_link`) : une adresse
+  `?source=manager&page=…&ticket=…&projet=…&question=…&contexte=…` ouvre la page demandée (à défaut Assistant pour
+  une question, Lancement pour un ticket), pose le ticket dans « Lancement » comme après une recherche, choisit le
+  client connu de l'onglet « Cucumber », préremplit une question de l'Assistant (envoyée seulement sur clic) et
+  affiche le résumé du manager. Appliqué une fois par session ; aucune action lancée. Contrat commun :
+  `agent-manager-savoye/manager/liens.py`.
 - **Mesure de la consommation** (`tools/token_measure.py`, sans token) : chaque appel `claude` ajoute à
   `.tmp/token_usage.csv` la session, la reprise (`--resume`), le cumul de la session, le contexte moyen relu par
   tour (`(entrée + cache écrit + cache lu) / tours`) et les résultats d'outils de l'appel par outil (Bash classé :

@@ -13,7 +13,7 @@ import logging
 
 from dotenv import dotenv_values, load_dotenv
 
-from tools import auth_tools, config_commune, env_tools
+from tools import auth_tools, config_commune, env_tools, lien_manager
 from tools import client_version, cucumber_delivery, cucumber_incidents, cucumber_init_fix, cucumber_library_upgrade, cucumber_lock, cucumber_modules, cucumber_test_data, standard_version, standard_version_task
 from tools import (cucumber_a_revoir, cucumber_java21, cucumber_simple, cucumber_audit, cucumber_bilan, cucumber_checks, cucumber_coverage, cucumber_job,
                    cucumber_decisions, cucumber_detection, cucumber_environment, cucumber_failures, cucumber_import,
@@ -511,7 +511,58 @@ if env_problems:
                        f".env.bak.")
             st.rerun()
 
+def apply_manager_link() -> None:
+    """
+    Lien prérempli d'agent-manager-savoye (tools/lien_manager.py), appliqué une fois par session : page, ticket posé
+    dans « Lancement », client de l'onglet « Cucumber », question préremplie de l'« Assistant », résumé affiché.
+    Rien n'est lancé.
+    """
+    link = lien_manager.lire(st.query_params.to_dict(), PAGES)
+    if not link or st.session_state.get("manager_link_signature") == lien_manager.signature(link):
+        return
+    st.session_state["manager_link_signature"] = lien_manager.signature(link)
+    st.session_state["manager_link"] = link
+    # Page demandée ; à défaut, celle de ce qui est transmis (question → Assistant, ticket → Lancement)
+    page = link.get("page") or ("assistant" if link.get("question") else "lancement" if link.get("ticket") else "")
+    if page:
+        st.session_state[NAV_KEY] = page
+    ticket = link.get("ticket")
+    if ticket:
+        title = get_jira_issue_summary(ticket)
+        project = lien_manager.projet_jira(ticket)
+        st.session_state.update(jira_tickets=[ticket], jira_titles={ticket: title} if title else {},
+                                jira_context={}, selected_index=0, selected_jira_project=project,
+                                workflow_step="INIT", search_project=project)
+        st.session_state.pop("ticket_selectbox", None)
+    client = lien_manager.projet_connu(link.get("projet", ""),
+                                       cucumber_detection.known_projects(cucumber_tools.CACHE_ROOT))
+    if client:
+        st.session_state["cs_project"] = client
+        st.session_state.pop("cs_repo", None)        # réglages du client rechargés (load_simple_project)
+    if link.get("question"):
+        st.session_state["manager_question"] = link["question"]
+
+
+def render_manager_link() -> None:
+    """Bandeau du lien du manager : ce qui a été transmis, masquable."""
+    link = st.session_state.get("manager_link")
+    if not link:
+        return
+    with st.container(border=True):
+        details = " · ".join(x for x in (link.get("ticket"), link.get("projet")) if x)
+        st.markdown("**Ouvert depuis le manager**" + (f" — {details}" if details else ""))
+        if link.get("contexte"):
+            st.caption(link["contexte"])
+        if link.get("ticket") and st.session_state.get(NAV_KEY) == "lancement":
+            st.caption(f"Ticket {link['ticket']} posé dans « Lancement » : rien n'est lancé sans toi.")
+        if st.button("Masquer", key="manager_link_hide", type="tertiary"):
+            st.session_state.pop("manager_link", None)
+            st.rerun()
+
+
+apply_manager_link()
 PAGE = render_navigation()
+render_manager_link()
 
 # Initialisation de l'état
 if "workflow_step" not in st.session_state:
@@ -4476,6 +4527,17 @@ def render_assistant_tab() -> None:
             for index, example in enumerate(ASSISTANT_EXAMPLES):
                 if st.button(example, type="tertiary", key=f"assistant_example_{index}"):
                     st.session_state["assistant_pending"] = example
+    prepared = st.session_state.get("manager_question")
+    if prepared:
+        with st.container(border=True):
+            st.caption("Question préparée par le manager (envoyée seulement si tu cliques) :")
+            st.markdown(prepared)
+            with st.container(horizontal=True):
+                if st.button("Envoyer cette question", type="primary", key="manager_question_send"):
+                    st.session_state["assistant_pending"] = st.session_state.pop("manager_question")
+                if st.button("Ignorer", key="manager_question_drop"):
+                    st.session_state.pop("manager_question", None)
+                    st.rerun()
     for message in messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
