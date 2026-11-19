@@ -85,6 +85,39 @@ py -3.12 -m venv .venv
   analyses, ticket, Cucumber, builds Jenkins). Aucune écriture (vérifié par `tests/test_lecture_manager.py`).
   Tout affichage des outils part sur stderr, stdout étant le canal MCP. Ne jamais le déclarer dans un `.mcp.json`
   à la racine.
+- **Liens préremplis du manager** (`tools/lien_manager.py`, `app.apply_manager_link`) : une adresse
+  `?source=manager&page=…&ticket=…&projet=…&question=…&contexte=…` ouvre la page demandée (à défaut Assistant pour
+  une question, Lancement pour un ticket), pose le ticket dans « Lancement » comme après une recherche, choisit le
+  client connu de l'onglet « Cucumber », préremplit une question de l'Assistant (envoyée seulement sur clic) et
+  affiche le résumé du manager. Appliqué une fois par session ; aucune action lancée. Contrat commun :
+  `agent-manager-savoye/manager/liens.py`.
+- **Mesure de la consommation** (`tools/token_measure.py`, sans token) : chaque appel `claude` ajoute à
+  `.tmp/token_usage.csv` la session, la reprise (`--resume`), le cumul de la session, le contexte moyen relu par
+  tour (`(entrée + cache écrit + cache lu) / tours`) et les résultats d'outils de l'appel par outil (Bash classé :
+  base, logs, compilation, git, Jira), lus dans la transcription de Claude Code
+  (`<CLAUDE_CONFIG_DIR ou ~/.claude>/projects/*/<session>.jsonl` ; pour une session reprise, seules les lignes
+  nouvelles, d'après `.tmp/token_transcripts.json`). Au mieux : aucune erreur ne remonte à l'étape. Rapport :
+  `.venv\Scripts\python.exe -m tools.token_report [--depuis AAAA-MM-JJ] [--ticket CLE] [--etape cucumber]`.
+  C'est la référence pour juger les évolutions du contexte et de la mémoire (corrections, mémoire par spécifique,
+  prévention avant écriture).
+- **Dossier de passation** (`tools/cucumber_handover.py`, `CUCUMBER_HANDOVER`, défaut 1) : les corrections après
+  exécution partent en session neuve (`cucumber_followup(..., fresh=True)`) ; ce qui doit survivre d'une tentative
+  à l'autre est dans `lot["passation"][tag]` (cause, preuves base, hypothèses, résultat au run suivant), injecté
+  dans le prompt de la tentative suivante et de l'analyse du dernier run. Toute nouvelle information utile à une
+  correction suivante passe par ce dossier, pas par la reprise de session.
+- **Mémoire par spécifique** (`tools/cucumber_spec_memory.py`, `CUCUMBER_SPEC_MEMORY`, défaut 1) : à la fin de
+  chaque lot (après `cucumber_results.record_lot`), ce que la génération a établi pour chaque spécifique est ajouté
+  à `.tmp/cucumber/<client>/memoire_specifiques.json` (5 générations au plus), à partir de l'état du lot seul
+  (exécution, `a_revoir`, `passation`, `correction.restantes_detail`, `decisions_en_attente`, `arret`). Injecté
+  dans `prompts/cucumber_client_lot.md` (`${memoire}`). Les scénarios sont rattachés à leur spécifique par
+  `lot["indicateurs"]` ; un lot d'un seul spécifique lui rattache tout.
+- **Prévention avant écriture** (`tools/cucumber_prevention.py`, `CUCUMBER_PREVENTION`, défaut 1) :
+  `verify_cucumber_lot(..., first_check=True)` (lot écrit par cette exécution) relève les erreurs de son premier
+  contrôle par type (`kind` : message sans chemin, ligne, valeurs ni nombres) dans `.tmp/cucumber/<client>/controles.json` ;
+  `${prevention}` de `prompts/cucumber_client_lot.md` donne les types vus au moins 2 fois. `tools/cucumber_compile.py`
+  contrôle aussi les colonnes de DataTable des features modifiées depuis le dernier commit
+  (`colonnes_std.json`, écrit avant les lots). Pour ajouter un contrôle exécutable par l'agent, l'ajouter à
+  `cucumber_compile.main` avec le même code que le contrôle après lot.
 
 ## 3. Prompts, outils et évals
 

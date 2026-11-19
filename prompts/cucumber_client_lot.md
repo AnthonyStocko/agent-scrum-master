@@ -7,3 +7,6 @@ ${profil_block}
 ${runner_block}
 ${lot_block}
 ${db_block}${odatio_docs_block}${competences}
+
+${memoire}${prevention}
+${db_block}${competences}

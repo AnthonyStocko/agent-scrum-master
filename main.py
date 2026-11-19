@@ -17,7 +17,7 @@ from urllib.parse import urlsplit
 import requests
 from dotenv import load_dotenv
 
-from tools import env_tools, secret_tools, cucumber_cost, cucumber_lessons, estimation
+from tools import env_tools, secret_tools, cucumber_cost, cucumber_lessons, estimation, token_measure, cucumber_handover, cucumber_spec_memory, cucumber_prevention
 from tools import cucumber_env_diagnosis, cucumber_copied_config, cucumber_anticipation, cucumber_anticipation_code, cucumber_business_rules, cucumber_cleanup
 from tools import bitbucket_std, client_version, cucumber_a_revoir, cucumber_arbitrage, cucumber_compile, cucumber_db_proof, cucumber_fix_budget, cucumber_stray, cucumber_incidents, cucumber_init_fix, cucumber_isolation, cucumber_lock, cucumber_routes, cucumber_test_data, cucumber_test_selection, cucumber_jobs, cucumber_modules, cucumber_delivery, cucumber_library, cucumber_library_upgrade, standard_version, cucumber_bilan, cucumber_checks, cucumber_coverage, cucumber_data_rules, cucumber_disabled, cucumber_guard, cucumber_job, cucumber_decisions, cucumber_detection, cucumber_diagnostic, cucumber_failures, cucumber_environment, cucumber_rules, cucumber_run, cucumber_testability, cucumber_preflight, cucumber_results, cucumber_links, cucumber_server_logs, groundcover_tools, mcp_servers, cucumber_import, cucumber_init, cucumber_recreation, cucumber_init_data, cucumber_initializers, cucumber_profile, cucumber_tools, cucumber_verify, cucumber_versions, cucumber_wait_steps, db_tools, integration_tools, knowledge_tools, pr_review, assistant, db_restore, jenkins_tools, skills
 from tools.jira_cli import attach_files, create_or_get_issue
@@ -85,7 +85,11 @@ def _env_int(name: str, default: int) -> int:
 
 TOKEN_USAGE_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".tmp", "token_usage.csv")
 TOKEN_USAGE_FIELDS = ["date", "ticket", "etape", "modele", "effort", "tokens_entree", "cache_ecrit", "cache_lu",
-                      "tokens_sortie", "tours", "duree_s", "cout_usd", "taille_prompt", "code_retour"]
+                      "tokens_sortie", "tours", "duree_s", "cout_usd", "taille_prompt", "code_retour",
+                      # Mesure du contexte (tools/token_measure.py) : session, reprise (--resume), cumul de la session,
+                      # contexte relu par tour, résultats d'outils de l'appel (nombre, caractères, détail par outil)
+                      "session", "reprise", "cout_session", "contexte_tour", "outils_appels", "outils_car",
+                      "outils_detail"]
 
 # Variable .env du modèle Claude par étape (vide = modèle par défaut de Claude Code)
 CLAUDE_MODEL_ENV = {
@@ -406,16 +410,33 @@ def report_token_usage(issue: str, step: str, model: str, usage: dict, prompt_ch
         return
     model_label = usage.get("modeles") or model or "défaut"
     cost = usage.get("cout_usd")
-    cost_label = f"{cost:.4f} $" if isinstance(cost, (int, float)) else "?"
+    # Reprise (--resume) : le cumul de la session dépasse le coût propre de l'appel (cucumber_cost.call_cost)
+    resumed = token_measure.is_resumed(usage)
+    # Session reprise sans cumul connu : Claude Code renvoie le coût cumulé de toute la session
+    cost_label = (f"{cost:.4f} $" + (" (cumul de la session)" if usage.get("cout_cumul_inconnu") else "")
+                  if isinstance(cost, (int, float)) else "?")
+    context = token_measure.context_per_turn(usage)
+    try:
+        tools_used = token_measure.tool_stats(usage.get("session_id", ""))
+    except Exception:  # mesure au mieux : jamais d'échec de l'étape
+        tools_used = {}
     print(f"\n[TOKENS] entrée={usage['tokens_entree']} | cache écrit={usage['cache_ecrit']} | "
           f"cache lu={usage['cache_lu']} | sortie={usage['tokens_sortie']} | tours={usage['tours']} | "
           f"coût={cost_label} | durée={usage['duree_s']} s | modèle={model_label} | effort={effort or 'défaut'} | "
-          f"prompt={prompt_chars} car.")
+          f"prompt={prompt_chars} car. | contexte/tour={round(context / 1000)}k | reprise={'oui' if resumed else 'non'}")
+    if tools_used.get("appels"):
+        print(f"[CONTEXTE] Résultats d'outils de l'appel : {tools_used['appels']} résultat(s), "
+              f"{round(tools_used['car'] / 1000)}k car. — {token_measure.detail_text(tools_used)} ; le plus gros : "
+              f"{tools_used['plus_gros'][0]} {round(tools_used['plus_gros'][1] / 1000)}k car.")
     row = {
         "date": datetime.now().isoformat(timespec="seconds"), "ticket": issue, "etape": step,
         "modele": model_label, "effort": effort, "taille_prompt": prompt_chars, "code_retour": returncode,
         **{k: usage.get(k, "") for k in ("tokens_entree", "cache_ecrit", "cache_lu", "tokens_sortie",
                                           "tours", "duree_s", "cout_usd")},
+        "session": usage.get("session_id", ""), "reprise": "oui" if resumed else "non",
+        "cout_session": usage.get("cout_session", ""), "contexte_tour": context,
+        "outils_appels": tools_used.get("appels", ""), "outils_car": tools_used.get("car", ""),
+        "outils_detail": json.dumps(tools_used.get("detail") or {}, ensure_ascii=False) if tools_used else "",
     }
     try:
         os.makedirs(os.path.dirname(TOKEN_USAGE_CSV), exist_ok=True)
@@ -2490,12 +2511,14 @@ def resume_lot_session() -> bool:
 
 
 def cucumber_followup(lot: dict, prompt: str, model: str, effort: str, tools: list, max_turns: str, run_dir: str,
-                      db_log: list = None, db_step: str = "", mcp_step: str = "") -> tuple:
+                      db_log: list = None, db_step: str = "", mcp_step: str = "", fresh: bool = False) -> tuple:
     """
     Appel de suite d'un lot (revue, correction de fichiers / compilation, correction après exécution). Si la session
     du lot est connue (lot["session"]), elle est reprise (--resume) avec le modèle, l'effort et le prompt système du
     lot : l'agent corrige en se souvenant du spécifique, des versions Standard et client, du code des steps et de ce
     qu'il a déjà essayé, sans relire. Sinon, ou si la reprise échoue, appel neuf avec `model` / `effort`.
+    `fresh` : session neuve même si celle du lot est reprenable (prompt système, modèle et effort du lot gardés) ;
+    le prompt porte alors ce qu'il faut savoir (dossier de passation, cucumber_handover).
     Renvoie (code retour, sortie, usage, quota atteint, modèle, effort).
     """
     session = (lot or {}).get("session", "") if resume_lot_session() else ""
@@ -2505,10 +2528,12 @@ def cucumber_followup(lot: dict, prompt: str, model: str, effort: str, tools: li
         print("[CUCUMBER] Session du lot sans cumul de coût connu : appel neuf au lieu de la reprise.")
         lot.pop("session", None)
         session = ""
-    if session and not cucumber_cost.session_warm(session):
+    if session and (fresh or not cucumber_cost.session_warm(session)):
         # Historique de la session sorti du cache de prompt (run Jenkins de plus de 5 minutes) : sa reprise le
-        # réécrirait en cache à chaque tour → appel neuf, avec le prompt système, le modèle et l'effort du lot
-        print(f"[CUCUMBER] Session du lot hors du cache de prompt (dernier appel il y a plus de "
+        # réécrirait en cache à chaque tour → appel neuf, avec le prompt système, le modèle et l'effort du lot.
+        # Session neuve demandée (fresh) : même chemin, le contexte relu à chaque tour reste celui du prompt.
+        print("[CUCUMBER] Session neuve avec le dossier de passation (au lieu de la reprise de la session du lot)."
+              if fresh else f"[CUCUMBER] Session du lot hors du cache de prompt (dernier appel il y a plus de "
               f"{cucumber_cost.resume_max_age()} s) : appel neuf au lieu de la reprise.")
         system_file = lot.get("systeme", "")
         system_file = system_file if system_file and os.path.exists(system_file) else ""
@@ -2773,7 +2798,8 @@ def analyse_last_run(label: str, lot: dict, worktree: str, files: list, failing:
         "logs_block": "", "donnees_test": cucumber_test_data.prompt_block(),
         "regle_spec_code": cucumber_decisions.spec_code_rule(), "regle_donnees": cucumber_decisions.data_change_rule(), "competences": "", **values,
         "logs_block": values.get("logs_block", "") + gc_block}, lot_label=label,
-        etape="ANALYSE DU DERNIER RUN (lecture seule)", erreurs=FINAL_ANALYSIS_RULE + "\n\n" + "\n".join(lines),
+        etape="ANALYSE DU DERNIER RUN (lecture seule)",
+        erreurs=FINAL_ANALYSIS_RULE + "\n\n" + "\n".join(lines) + cucumber_handover.block(lot, failing),
         fichiers="\n".join(f"- {f}" for f in files))
     tools = [t for t in lot_tools(values) if t not in READ_ONLY_EXCLUDED_TOOLS]
     saved = _changed_tests(worktree)
@@ -2791,6 +2817,7 @@ def analyse_last_run(label: str, lot: dict, worktree: str, files: list, failing:
               + (", quota atteint" if limit_hit else "") + ") : diagnostic absent du bilan.")
         return {}
     answer = cucumber_diagnostic.parse_fix_result(output)
+    cucumber_handover.record_attempt(lot, "analyse du dernier run", answer, failing)
     for error in apply_findings(answer, failing, "analyse du dernier run")[1]:
         print(f"[LOT {label}] ⛔ {error}")
     for tag, item in failing.items():
@@ -2970,7 +2997,8 @@ def verify_execution_lot(lot: dict, lot_specs: list, label: str, worktree: str, 
             {"id": v["id"], "step": v.get("step", ""), "heure": v.get("heure", "")} for v in bad.values()],
             build=next((v.get("build") for v in bad.values() if v.get("build")), ""))
         prompt = render_prompt("cucumber_client_fix", **{"logs_block": "", "donnees_test": cucumber_test_data.prompt_block(), "regle_spec_code": cucumber_decisions.spec_code_rule(), "regle_donnees": cucumber_decisions.data_change_rule(), "competences": skills.prompt_block("cucumber-correction", "\n".join(lines)), **values, "logs_block": values.get("logs_block", "") + gc_block, "donnees_test": values.get("donnees_test", cucumber_test_data.prompt_block()) + test_selection_block(client, worktree, files)}, lot_label=label, etape="VÉRIFICATION PAR EXÉCUTION",
-                               erreurs="\n".join(lines) + cucumber_incidents.context_block(
+                               erreurs="\n".join(lines) + cucumber_handover.block(lot, bad)
+                               + cucumber_incidents.context_block(
                                    client, [{"step": v.get("step", ""), "message": v.get("motif", "")}
                                             for v in bad.values()]),
                                fichiers="\n".join(f"- {f}" for f in files))
@@ -2983,7 +3011,8 @@ def verify_execution_lot(lot: dict, lot_specs: list, label: str, worktree: str, 
         returncode, output, usage, limit_hit, used_model, effort = cucumber_followup(
             followup_lot, prompt, verify_model, effort, lot_tools(values),
             str(_env_int("CUCUMBER_FIX_MAX_TURNS", 10)), run_dir,
-            db_log=lot.setdefault("base", []), db_step="correction après exécution", mcp_step="cucumber-verify-fix")
+            db_log=lot.setdefault("base", []), db_step="correction après exécution", mcp_step="cucumber-verify-fix",
+            fresh=cucumber_handover.enabled())
         report_token_usage(work_key, "cucumber-verify-fix", used_model, usage, len(prompt), returncode, effort)
         on_usage(usage)
         if limit_hit:
@@ -3018,6 +3047,7 @@ def verify_execution_lot(lot: dict, lot_specs: list, label: str, worktree: str, 
             applied = cucumber_diagnostic.parse_fix_result(more_output)
             if applied:
                 fix_result = cucumber_diagnostic.merge_applied(fix_result, applied)
+        cucumber_handover.record_attempt(lot, f"correction {attempt + 1}", fix_result, sent)
         described += [c for c in fix_result.get("corrections") or [] if isinstance(c, dict)]
         skills.record_use(fix_result.get("competences_utilisees") or [])
         new_causes = cucumber_fix_budget.proven_causes(fix_result)
@@ -3103,6 +3133,8 @@ def verify_execution_lot(lot: dict, lot_specs: list, label: str, worktree: str, 
                     print(f"[LOT {label}] 📘 Leçon n° {lesson['numero']} retenue pour le client : {lesson['regle']}"
                           + (" (contrôle automatique)" if lesson.get("controle") else ""))
                 lesson_candidates.pop(tag, None)
+        # Dossier de passation : résultat de cette tentative (vert, même échec, nouvel échec, non relancé)
+        cucumber_handover.record_outcome(lot, result["scenarios"], set(present))
         # D7 : un diagnostic temporaire ne s'exécute qu'une fois, sa sortie est gardée dans le journal du scénario
         temporary = cucumber_diagnostic.remove_temporary(worktree)
         for rel in temporary:
@@ -3503,14 +3535,15 @@ def load_job_values(client: str, profile: dict) -> None:
 def verify_cucumber_lot(client: str, label: str, worktree: str, base: str, cucumber_std_dir: str, files: list,
                         compile_cmd: str, dry_run_cmd: str, values: dict, model: str, work_key: str, run_dir: str,
                         on_usage, inspired: list = (), context: dict = None, db_log: list = None,
-                        lot: dict = None) -> dict:
+                        lot: dict = None, first_check: bool = False) -> dict:
     """
     Contrôles des fichiers (check_cucumber_lot, avec `context` : init du client et runner, fichiers de données du Standard copiés), puis compilation (et
     dry-run) si `compile_cmd`, en Python ; en cas d'erreurs dans les fichiers ou le code, au plus
     CUCUMBER_FIX_ATTEMPTS appels de correction limités (erreurs, fichiers du lot, catalogue Java) avec le modèle de
     correction, puis une dernière avec le modèle du lot (cucumber_fix_plan). Renvoie le dernier résultat de
     cucumber_tools.verify_build, avec "quota" si la limite de session a été atteinte. `db_log` : commandes base
-    des corrections (lot["base"]).
+    des corrections (lot["base"]). `first_check` : premier contrôle de ce que le lot a écrit, ses erreurs sont
+    relevées par type (cucumber_prevention) pour être données aux lots suivants avant qu'ils écrivent.
     """
     plan = cucumber_fix_plan(model, _env_int("CUCUMBER_FIX_ATTEMPTS", 2))
     # Jusqu'au bout : tant que les erreurs évoluent, d'autres corrections avec le modèle du lot (plus de tours), au
@@ -3524,6 +3557,8 @@ def verify_cucumber_lot(client: str, label: str, worktree: str, base: str, cucum
     for attempt in range(attempts + 1):
         check = check_cucumber_lot(client, label, worktree, base, cucumber_std_dir, files, compile_cmd, dry_run_cmd,
                                    inspired, context)
+        if first_check and attempt == 0 and not check["environnement"]:
+            cucumber_prevention.record(client, check["erreurs"], (lot or {}).get("numero"))
         if check["ok"] or check["environnement"] or attempt == attempts or (lot and cucumber_cost.over_budget(lot, label)):
             return check
         errors = frozenset(check["erreurs"])
@@ -7718,6 +7753,8 @@ def run_cucumber_client(args, work_key: str, local_client_repo: str, local_std_r
             local_cucumber_std_repo, conventions.get("library_version", ""))
     # 3. Un appel Claude neuf par lot, puis compilation (et correction) en Python ; commit après chaque lot
     processed = 0
+    # Prévention : colonnes de DataTable du Standard par step, contrôlées par l'agent pendant qu'il écrit
+    cucumber_prevention.write_columns(client, reference.get("colonnes_par_step"))
     for lot in lots:
         if lot.get("statut") in ("termine", "exclu"):
             continue
@@ -7737,6 +7774,7 @@ def run_cucumber_client(args, work_key: str, local_client_repo: str, local_std_r
         CURRENT_LOT["lot"] = lot
         lot.pop("blocage_environnement", None)
         state.pop("arret_environnement", None)
+        just_written = False  # lot écrit par cette exécution (génération) : son premier contrôle est relevé
         if lot.get("type") == "correction" and lot.get("resultats") is None:
             # Lot « correction » d'un import : scénarios existants, aucune génération
             results = []
@@ -7750,6 +7788,7 @@ def run_cucumber_client(args, work_key: str, local_client_repo: str, local_std_r
             results, files = lot["resultats"], lot.get("fichiers") or []
             print(f"[LOT {label}] Reprise de la correction et de la vérification ({len(files)} fichier(s)).")
         else:
+            just_written = True
             # Exemple du lot : la feature Standard la mieux classée, à défaut les exemples globaux
             example = cucumber_tools.lot_example(lot_specs)
             values = {**fixed_values, "examples": f"'{example}'"} if example else fixed_values
@@ -7776,6 +7815,8 @@ def run_cucumber_client(args, work_key: str, local_client_repo: str, local_std_r
                                        cucumber_profile.profile_block(profile, gap_file=gap_file,
                                                                       known=cucumber_testability.load_index(client)),
                                        cucumber_testability.answers_block(profile)])),
+                                   memoire=cucumber_spec_memory.block(client, lot["ids"], cucumber_cost.load(client)),
+                                   prevention=cucumber_prevention.block(client, reference.get("colonnes_par_step")),
                                    lot_label=label)
             # Accès limité au dossier de travail du client (worktree, sources, extraits Jira) et aux catalogues
             returncode, output, usage, limit_hit = run_cucumber_claude(prompt, model, lot_tools(fixed_values),
@@ -7835,7 +7876,7 @@ def run_cucumber_client(args, work_key: str, local_client_repo: str, local_std_r
             check = verify_cucumber_lot(client, label, worktree, state["base"], local_cucumber_std_repo, files,
                                         compile_cmd, dry_run_cmd, {**fixed_values, **java}, model, work_key, run_dir,
                                         lambda usage: add_usage(lot, usage), inspired_of(results), context,
-                                        lot.setdefault("base", []), lot)
+                                        lot.setdefault("base", []), lot, first_check=just_written)
             files = list(dict.fromkeys(files + cucumber_tools.lot_files(worktree, [])))
         # Niveaux 2 et 3 : exécution sur le client, contre-épreuves, correction bornée, retrait des scénarios faibles
         if lot.get("tags") and (check["ok"] or check.get("environnement")):
@@ -7881,6 +7922,9 @@ def run_cucumber_client(args, work_key: str, local_client_repo: str, local_std_r
                    else None)
         # Résultat obligatoire de la génération de chaque tâche du lot (carte de la tâche)
         cucumber_results.record_lot(state, lot)
+        # Mémoire par spécifique (causes ouvertes, pistes écartées, hypothèses, décisions) pour la génération suivante
+        cucumber_spec_memory.record_lot(client, lot, state.get("generations"),
+                                        {i: (specifics.get(i) or {}).get("libelle", "") for i in lot["ids"]})
         # Coût de cette exécution du lot, cumulé par spécifique (conservé d'une génération à l'autre)
         lot["cout_execution"] = round(cucumber_cost.run_cost(lot), 4)
         cumulated = cucumber_cost.record_lot_run(client, lot, state.get("debut", ""))
