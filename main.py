@@ -17,7 +17,7 @@ from urllib.parse import urlsplit
 import requests
 from dotenv import load_dotenv
 
-from tools import env_tools, secret_tools, cucumber_cost, cucumber_lessons, estimation, token_measure
+from tools import env_tools, secret_tools, cucumber_cost, cucumber_lessons, estimation, token_measure, cucumber_handover
 from tools import cucumber_env_diagnosis, cucumber_copied_config, cucumber_anticipation, cucumber_anticipation_code, cucumber_business_rules, cucumber_cleanup
 from tools import bitbucket_std, client_version, cucumber_a_revoir, cucumber_arbitrage, cucumber_compile, cucumber_db_proof, cucumber_fix_budget, cucumber_stray, cucumber_incidents, cucumber_init_fix, cucumber_isolation, cucumber_lock, cucumber_routes, cucumber_test_data, cucumber_test_selection, cucumber_jobs, cucumber_modules, cucumber_delivery, cucumber_library, cucumber_library_upgrade, standard_version, cucumber_bilan, cucumber_checks, cucumber_coverage, cucumber_data_rules, cucumber_disabled, cucumber_guard, cucumber_job, cucumber_decisions, cucumber_detection, cucumber_diagnostic, cucumber_failures, cucumber_environment, cucumber_rules, cucumber_run, cucumber_testability, cucumber_preflight, cucumber_results, cucumber_links, cucumber_server_logs, groundcover_tools, mcp_servers, cucumber_import, cucumber_init, cucumber_recreation, cucumber_init_data, cucumber_initializers, cucumber_profile, cucumber_tools, cucumber_verify, cucumber_versions, cucumber_wait_steps, db_tools, integration_tools, knowledge_tools, pr_review, assistant, db_restore, jenkins_tools, skills
 from tools.jira_cli import attach_files, create_or_get_issue
@@ -2469,12 +2469,14 @@ def resume_lot_session() -> bool:
 
 
 def cucumber_followup(lot: dict, prompt: str, model: str, effort: str, tools: list, max_turns: str, run_dir: str,
-                      db_log: list = None, db_step: str = "", mcp_step: str = "") -> tuple:
+                      db_log: list = None, db_step: str = "", mcp_step: str = "", fresh: bool = False) -> tuple:
     """
     Appel de suite d'un lot (revue, correction de fichiers / compilation, correction après exécution). Si la session
     du lot est connue (lot["session"]), elle est reprise (--resume) avec le modèle, l'effort et le prompt système du
     lot : l'agent corrige en se souvenant du spécifique, des versions Standard et client, du code des steps et de ce
     qu'il a déjà essayé, sans relire. Sinon, ou si la reprise échoue, appel neuf avec `model` / `effort`.
+    `fresh` : session neuve même si celle du lot est reprenable (prompt système, modèle et effort du lot gardés) ;
+    le prompt porte alors ce qu'il faut savoir (dossier de passation, cucumber_handover).
     Renvoie (code retour, sortie, usage, quota atteint, modèle, effort).
     """
     session = (lot or {}).get("session", "") if resume_lot_session() else ""
@@ -2484,10 +2486,12 @@ def cucumber_followup(lot: dict, prompt: str, model: str, effort: str, tools: li
         print("[CUCUMBER] Session du lot sans cumul de coût connu : appel neuf au lieu de la reprise.")
         lot.pop("session", None)
         session = ""
-    if session and not cucumber_cost.session_warm(session):
+    if session and (fresh or not cucumber_cost.session_warm(session)):
         # Historique de la session sorti du cache de prompt (run Jenkins de plus de 5 minutes) : sa reprise le
-        # réécrirait en cache à chaque tour → appel neuf, avec le prompt système, le modèle et l'effort du lot
-        print(f"[CUCUMBER] Session du lot hors du cache de prompt (dernier appel il y a plus de "
+        # réécrirait en cache à chaque tour → appel neuf, avec le prompt système, le modèle et l'effort du lot.
+        # Session neuve demandée (fresh) : même chemin, le contexte relu à chaque tour reste celui du prompt.
+        print("[CUCUMBER] Session neuve avec le dossier de passation (au lieu de la reprise de la session du lot)."
+              if fresh else f"[CUCUMBER] Session du lot hors du cache de prompt (dernier appel il y a plus de "
               f"{cucumber_cost.resume_max_age()} s) : appel neuf au lieu de la reprise.")
         system_file = lot.get("systeme", "")
         system_file = system_file if system_file and os.path.exists(system_file) else ""
@@ -2752,7 +2756,8 @@ def analyse_last_run(label: str, lot: dict, worktree: str, files: list, failing:
         "logs_block": "", "donnees_test": cucumber_test_data.prompt_block(),
         "regle_spec_code": cucumber_decisions.spec_code_rule(), "regle_donnees": cucumber_decisions.data_change_rule(), "competences": "", **values,
         "logs_block": values.get("logs_block", "") + gc_block}, lot_label=label,
-        etape="ANALYSE DU DERNIER RUN (lecture seule)", erreurs=FINAL_ANALYSIS_RULE + "\n\n" + "\n".join(lines),
+        etape="ANALYSE DU DERNIER RUN (lecture seule)",
+        erreurs=FINAL_ANALYSIS_RULE + "\n\n" + "\n".join(lines) + cucumber_handover.block(lot, failing),
         fichiers="\n".join(f"- {f}" for f in files))
     tools = [t for t in lot_tools(values) if t not in READ_ONLY_EXCLUDED_TOOLS]
     saved = _changed_tests(worktree)
@@ -2770,6 +2775,7 @@ def analyse_last_run(label: str, lot: dict, worktree: str, files: list, failing:
               + (", quota atteint" if limit_hit else "") + ") : diagnostic absent du bilan.")
         return {}
     answer = cucumber_diagnostic.parse_fix_result(output)
+    cucumber_handover.record_attempt(lot, "analyse du dernier run", answer, failing)
     for error in apply_findings(answer, failing, "analyse du dernier run")[1]:
         print(f"[LOT {label}] ⛔ {error}")
     for tag, item in failing.items():
@@ -2949,7 +2955,8 @@ def verify_execution_lot(lot: dict, lot_specs: list, label: str, worktree: str, 
             {"id": v["id"], "step": v.get("step", ""), "heure": v.get("heure", "")} for v in bad.values()],
             build=next((v.get("build") for v in bad.values() if v.get("build")), ""))
         prompt = render_prompt("cucumber_client_fix", **{"logs_block": "", "donnees_test": cucumber_test_data.prompt_block(), "regle_spec_code": cucumber_decisions.spec_code_rule(), "regle_donnees": cucumber_decisions.data_change_rule(), "competences": skills.prompt_block("cucumber-correction", "\n".join(lines)), **values, "logs_block": values.get("logs_block", "") + gc_block, "donnees_test": values.get("donnees_test", cucumber_test_data.prompt_block()) + test_selection_block(client, worktree, files)}, lot_label=label, etape="VÉRIFICATION PAR EXÉCUTION",
-                               erreurs="\n".join(lines) + cucumber_incidents.context_block(
+                               erreurs="\n".join(lines) + cucumber_handover.block(lot, bad)
+                               + cucumber_incidents.context_block(
                                    client, [{"step": v.get("step", ""), "message": v.get("motif", "")}
                                             for v in bad.values()]),
                                fichiers="\n".join(f"- {f}" for f in files))
@@ -2962,7 +2969,8 @@ def verify_execution_lot(lot: dict, lot_specs: list, label: str, worktree: str, 
         returncode, output, usage, limit_hit, used_model, effort = cucumber_followup(
             followup_lot, prompt, verify_model, effort, lot_tools(values),
             str(_env_int("CUCUMBER_FIX_MAX_TURNS", 10)), run_dir,
-            db_log=lot.setdefault("base", []), db_step="correction après exécution", mcp_step="cucumber-verify-fix")
+            db_log=lot.setdefault("base", []), db_step="correction après exécution", mcp_step="cucumber-verify-fix",
+            fresh=cucumber_handover.enabled())
         report_token_usage(work_key, "cucumber-verify-fix", used_model, usage, len(prompt), returncode, effort)
         on_usage(usage)
         if limit_hit:
@@ -2997,6 +3005,7 @@ def verify_execution_lot(lot: dict, lot_specs: list, label: str, worktree: str, 
             applied = cucumber_diagnostic.parse_fix_result(more_output)
             if applied:
                 fix_result = cucumber_diagnostic.merge_applied(fix_result, applied)
+        cucumber_handover.record_attempt(lot, f"correction {attempt + 1}", fix_result, sent)
         described += [c for c in fix_result.get("corrections") or [] if isinstance(c, dict)]
         skills.record_use(fix_result.get("competences_utilisees") or [])
         new_causes = cucumber_fix_budget.proven_causes(fix_result)
@@ -3082,6 +3091,8 @@ def verify_execution_lot(lot: dict, lot_specs: list, label: str, worktree: str, 
                     print(f"[LOT {label}] 📘 Leçon n° {lesson['numero']} retenue pour le client : {lesson['regle']}"
                           + (" (contrôle automatique)" if lesson.get("controle") else ""))
                 lesson_candidates.pop(tag, None)
+        # Dossier de passation : résultat de cette tentative (vert, même échec, nouvel échec, non relancé)
+        cucumber_handover.record_outcome(lot, result["scenarios"], set(present))
         # D7 : un diagnostic temporaire ne s'exécute qu'une fois, sa sortie est gardée dans le journal du scénario
         temporary = cucumber_diagnostic.remove_temporary(worktree)
         for rel in temporary:
