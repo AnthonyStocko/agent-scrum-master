@@ -75,6 +75,12 @@ py -3.12 -m venv .venv
   peut influencer les résultats. Pour une référence fiable, lancer les tests dans un dossier sans `.env`
   (un worktree, par exemple).
 - Aucun linter ni fichier de configuration (pas de `pyproject.toml`, `setup.cfg`, `ruff.toml` ni `.flake8`).
+- **Lancé par agent-manager-savoye**, l'agent reçoit ses accès et secrets communs en variables d'environnement,
+  avec leur liste dans `SAVOYE_VARIABLES`. `tools/config_commune.py` les relève au premier import (avant le
+  `load_dotenv(override=True)` d'`app.py`) et `app.py` les remet après chaque rechargement du `.env` : ils
+  l'emportent sur le `.env`, et l'onglet Configuration ne les y réécrit pas. `main.py`, `webhook_server.py` et
+  `tools/db_tools.py` chargent le `.env` sans `override` : l'environnement hérité l'emporte déjà. Lancé seul,
+  rien ne change.
 
 ## 3. Prompts, outils et évals
 

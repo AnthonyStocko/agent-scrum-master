@@ -283,6 +283,14 @@ Capture (client fictif, dépôt avec features écrites à la main, aucun log imp
 - **Patch livré en un commit** (`CUCUMBER_PATCH_MODE=squash`, défaut) : les modifications de l'agent sont **rejouées** commit par commit (fusions de synchronisation exclues), fichier par fichier, sur la branche d'intégration **actuelle** — pas l'état final de son espace de travail, qui pouvait contenir une version périmée d'un fichier corrigé depuis à la main. Modification déjà présente : ignorée ; applicable : appliquée ; en conflit avec une modification faite depuis sur la branche : écartée, la version de la branche gagne, et listée dans `<client>-cucumber.patch.ecarts.txt`. Jamais de suppression d'un fichier existant ; chemin qui ne diffère que par la casse : livré sous le chemin existant. Construit dans un index temporaire, sans espace de travail Git temporaire. `--patch-only` régénère le patch sans appel à Claude. `CUCUMBER_PATCH_MODE=commits` : un commit par lot.
 - **Overrides sans environnement Standard** : sans `CUCUMBER_VERIFY_ENV_STD`, un override est jugé comme une extension (client et mutation) ; `CUCUMBER_VERIFY_REQUIRE_STD=1` le laisse « non vérifié ».
 
+## Lancé par le manager (agent-manager-savoye)
+
+Quand agent-manager-savoye lance cet agent, il lui transmet sa configuration commune : accès Jira, Bitbucket,
+Jenkins, groundcover et compte Claude, avec les jetons qui lui reviennent. Ces valeurs l'emportent sur le `.env` ;
+l'onglet ⚙️ Configuration les signale et ne les réécrit pas dans le `.env` : elles se modifient dans le manager
+(onglet Configuration › Accès), puis il suffit de redémarrer l'agent depuis le manager. Les réglages propres à
+cet agent (Cucumber, modèles, base de travail…) restent dans son `.env`. Lancé seul, rien ne change.
+
 ## Connaissances partagées
 
 Chaque analyse de l'agent est déposée en Markdown dans un répertoire commun (partage réseau d'entreprise), puis consultée avant les analyses suivantes, par vous comme par vos collègues. C'est un complément de la mémoire locale (`.tmp/memory`, propre à chaque poste), qui reste inchangée. Le code est dans `tools/knowledge_tools.py` ; le masquage des secrets, commun à tout l'agent, dans `tools/secret_tools.py`.
