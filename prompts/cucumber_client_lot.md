@@ -6,5 +6,5 @@ ${consignes}
 ${profil_block}
 ${runner_block}
 ${lot_block}
-${memoire}
+${memoire}${prevention}
 ${db_block}${competences}

@@ -17,7 +17,7 @@ from urllib.parse import urlsplit
 import requests
 from dotenv import load_dotenv
 
-from tools import env_tools, secret_tools, cucumber_cost, cucumber_lessons, estimation, token_measure, cucumber_handover, cucumber_spec_memory
+from tools import env_tools, secret_tools, cucumber_cost, cucumber_lessons, estimation, token_measure, cucumber_handover, cucumber_spec_memory, cucumber_prevention
 from tools import cucumber_env_diagnosis, cucumber_copied_config, cucumber_anticipation, cucumber_anticipation_code, cucumber_business_rules, cucumber_cleanup
 from tools import bitbucket_std, client_version, cucumber_a_revoir, cucumber_arbitrage, cucumber_compile, cucumber_db_proof, cucumber_fix_budget, cucumber_stray, cucumber_incidents, cucumber_init_fix, cucumber_isolation, cucumber_lock, cucumber_routes, cucumber_test_data, cucumber_test_selection, cucumber_jobs, cucumber_modules, cucumber_delivery, cucumber_library, cucumber_library_upgrade, standard_version, cucumber_bilan, cucumber_checks, cucumber_coverage, cucumber_data_rules, cucumber_disabled, cucumber_guard, cucumber_job, cucumber_decisions, cucumber_detection, cucumber_diagnostic, cucumber_failures, cucumber_environment, cucumber_rules, cucumber_run, cucumber_testability, cucumber_preflight, cucumber_results, cucumber_links, cucumber_server_logs, groundcover_tools, mcp_servers, cucumber_import, cucumber_init, cucumber_recreation, cucumber_init_data, cucumber_initializers, cucumber_profile, cucumber_tools, cucumber_verify, cucumber_versions, cucumber_wait_steps, db_tools, integration_tools, knowledge_tools, pr_review, assistant, db_restore, jenkins_tools, skills
 from tools.jira_cli import attach_files, create_or_get_issue
@@ -3493,14 +3493,15 @@ def load_job_values(client: str, profile: dict) -> None:
 def verify_cucumber_lot(client: str, label: str, worktree: str, base: str, cucumber_std_dir: str, files: list,
                         compile_cmd: str, dry_run_cmd: str, values: dict, model: str, work_key: str, run_dir: str,
                         on_usage, inspired: list = (), context: dict = None, db_log: list = None,
-                        lot: dict = None) -> dict:
+                        lot: dict = None, first_check: bool = False) -> dict:
     """
     Contrôles des fichiers (check_cucumber_lot, avec `context` : init du client et runner, fichiers de données du Standard copiés), puis compilation (et
     dry-run) si `compile_cmd`, en Python ; en cas d'erreurs dans les fichiers ou le code, au plus
     CUCUMBER_FIX_ATTEMPTS appels de correction limités (erreurs, fichiers du lot, catalogue Java) avec le modèle de
     correction, puis une dernière avec le modèle du lot (cucumber_fix_plan). Renvoie le dernier résultat de
     cucumber_tools.verify_build, avec "quota" si la limite de session a été atteinte. `db_log` : commandes base
-    des corrections (lot["base"]).
+    des corrections (lot["base"]). `first_check` : premier contrôle de ce que le lot a écrit, ses erreurs sont
+    relevées par type (cucumber_prevention) pour être données aux lots suivants avant qu'ils écrivent.
     """
     plan = cucumber_fix_plan(model, _env_int("CUCUMBER_FIX_ATTEMPTS", 2))
     # Jusqu'au bout : tant que les erreurs évoluent, d'autres corrections avec le modèle du lot (plus de tours), au
@@ -3514,6 +3515,8 @@ def verify_cucumber_lot(client: str, label: str, worktree: str, base: str, cucum
     for attempt in range(attempts + 1):
         check = check_cucumber_lot(client, label, worktree, base, cucumber_std_dir, files, compile_cmd, dry_run_cmd,
                                    inspired, context)
+        if first_check and attempt == 0 and not check["environnement"]:
+            cucumber_prevention.record(client, check["erreurs"], (lot or {}).get("numero"))
         if check["ok"] or check["environnement"] or attempt == attempts or (lot and cucumber_cost.over_budget(lot, label)):
             return check
         errors = frozenset(check["erreurs"])
@@ -7705,6 +7708,8 @@ def run_cucumber_client(args, work_key: str, local_client_repo: str, local_std_r
             local_cucumber_std_repo, conventions.get("library_version", ""))
     # 3. Un appel Claude neuf par lot, puis compilation (et correction) en Python ; commit après chaque lot
     processed = 0
+    # Prévention : colonnes de DataTable du Standard par step, contrôlées par l'agent pendant qu'il écrit
+    cucumber_prevention.write_columns(client, reference.get("colonnes_par_step"))
     for lot in lots:
         if lot.get("statut") in ("termine", "exclu"):
             continue
@@ -7724,6 +7729,7 @@ def run_cucumber_client(args, work_key: str, local_client_repo: str, local_std_r
         CURRENT_LOT["lot"] = lot
         lot.pop("blocage_environnement", None)
         state.pop("arret_environnement", None)
+        just_written = False  # lot écrit par cette exécution (génération) : son premier contrôle est relevé
         if lot.get("type") == "correction" and lot.get("resultats") is None:
             # Lot « correction » d'un import : scénarios existants, aucune génération
             results = []
@@ -7737,6 +7743,7 @@ def run_cucumber_client(args, work_key: str, local_client_repo: str, local_std_r
             results, files = lot["resultats"], lot.get("fichiers") or []
             print(f"[LOT {label}] Reprise de la correction et de la vérification ({len(files)} fichier(s)).")
         else:
+            just_written = True
             # Exemple du lot : la feature Standard la mieux classée, à défaut les exemples globaux
             example = cucumber_tools.lot_example(lot_specs)
             values = {**fixed_values, "examples": f"'{example}'"} if example else fixed_values
@@ -7764,6 +7771,7 @@ def run_cucumber_client(args, work_key: str, local_client_repo: str, local_std_r
                                                                       known=cucumber_testability.load_index(client)),
                                        cucumber_testability.answers_block(profile)])),
                                    memoire=cucumber_spec_memory.block(client, lot["ids"], cucumber_cost.load(client)),
+                                   prevention=cucumber_prevention.block(client, reference.get("colonnes_par_step")),
                                    lot_label=label)
             # Accès limité au dossier de travail du client (worktree, sources, extraits Jira) et aux catalogues
             returncode, output, usage, limit_hit = run_cucumber_claude(prompt, model, lot_tools(fixed_values),
@@ -7823,7 +7831,7 @@ def run_cucumber_client(args, work_key: str, local_client_repo: str, local_std_r
             check = verify_cucumber_lot(client, label, worktree, state["base"], local_cucumber_std_repo, files,
                                         compile_cmd, dry_run_cmd, {**fixed_values, **java}, model, work_key, run_dir,
                                         lambda usage: add_usage(lot, usage), inspired_of(results), context,
-                                        lot.setdefault("base", []), lot)
+                                        lot.setdefault("base", []), lot, first_check=just_written)
             files = list(dict.fromkeys(files + cucumber_tools.lot_files(worktree, [])))
         # Niveaux 2 et 3 : exécution sur le client, contre-épreuves, correction bornée, retrait des scénarios faibles
         if lot.get("tags") and (check["ok"] or check.get("environnement")):

@@ -105,6 +105,13 @@ py -3.12 -m venv .venv
   (exécution, `a_revoir`, `passation`, `correction.restantes_detail`, `decisions_en_attente`, `arret`). Injecté
   dans `prompts/cucumber_client_lot.md` (`${memoire}`). Les scénarios sont rattachés à leur spécifique par
   `lot["indicateurs"]` ; un lot d'un seul spécifique lui rattache tout.
+- **Prévention avant écriture** (`tools/cucumber_prevention.py`, `CUCUMBER_PREVENTION`, défaut 1) :
+  `verify_cucumber_lot(..., first_check=True)` (lot écrit par cette exécution) relève les erreurs de son premier
+  contrôle par type (`kind` : message sans chemin, ligne, valeurs ni nombres) dans `.tmp/cucumber/<client>/controles.json` ;
+  `${prevention}` de `prompts/cucumber_client_lot.md` donne les types vus au moins 2 fois. `tools/cucumber_compile.py`
+  contrôle aussi les colonnes de DataTable des features modifiées depuis le dernier commit
+  (`colonnes_std.json`, écrit avant les lots). Pour ajouter un contrôle exécutable par l'agent, l'ajouter à
+  `cucumber_compile.main` avec le même code que le contrôle après lot.
 
 ## 3. Prompts, outils et évals
 
