@@ -45,7 +45,7 @@ Le modèle et l'effort se règlent par étape dans le `.env` (ou l'onglet **⚙�
 | Revue et correction après exécution des lots Cucumber | `CLAUDE_MODEL_CUCUMBER` | `CLAUDE_EFFORT_CUCUMBER_FIX` (vide = `low`) |
 | Steps de recréation des données d'initializers (bouton Init, seulement s'il en reste à recréer) | `CLAUDE_MODEL_CUCUMBER` | `CLAUDE_EFFORT_CUCUMBER`, puis `CLAUDE_EFFORT_CUCUMBER_FIX` pour les corrections |
 
-Modèle : alias (`sonnet`, `opus`, `haiku`) ou identifiant complet. Effort : `low`, `medium`, `high`, `xhigh` ou `max` ; une autre valeur est signalée et ignorée. Vide = réglage de Claude Code sur le poste. Le modèle et l'effort de chaque appel sont affichés dans le journal et enregistrés dans `.tmp/token_usage.csv` (colonnes `modele` et `effort`), avec les tokens et le coût, pour comparer les niveaux.
+Modèle : alias (`sonnet`, `opus`, `haiku`) ou identifiant complet. Effort : `low`, `medium`, `high`, `xhigh` ou `max` ; une autre valeur est signalée et ignorée. Vide = réglage de Claude Code sur le poste. Le modèle et l'effort de chaque appel sont affichés dans le journal et enregistrés dans `.tmp/token_usage.csv` (colonnes `modele` et `effort`), avec les tokens et le coût, pour comparer les niveaux. Chaque ligne indique aussi le contexte moyen relu par tour, la reprise de session et le volume renvoyé par chaque outil ; synthèse par étape et par outil : `.venv\Scripts\python.exe -m tools.token_report --depuis AAAA-MM-JJ`.
 
 ## Installation
 

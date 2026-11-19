@@ -17,7 +17,7 @@ from urllib.parse import urlsplit
 import requests
 from dotenv import load_dotenv
 
-from tools import env_tools, secret_tools, cucumber_cost, cucumber_lessons, estimation
+from tools import env_tools, secret_tools, cucumber_cost, cucumber_lessons, estimation, token_measure
 from tools import cucumber_env_diagnosis, cucumber_copied_config, cucumber_anticipation, cucumber_anticipation_code, cucumber_business_rules, cucumber_cleanup
 from tools import bitbucket_std, client_version, cucumber_a_revoir, cucumber_arbitrage, cucumber_compile, cucumber_db_proof, cucumber_fix_budget, cucumber_stray, cucumber_incidents, cucumber_init_fix, cucumber_isolation, cucumber_lock, cucumber_routes, cucumber_test_data, cucumber_test_selection, cucumber_jobs, cucumber_modules, cucumber_delivery, cucumber_library, cucumber_library_upgrade, standard_version, cucumber_bilan, cucumber_checks, cucumber_coverage, cucumber_data_rules, cucumber_disabled, cucumber_guard, cucumber_job, cucumber_decisions, cucumber_detection, cucumber_diagnostic, cucumber_failures, cucumber_environment, cucumber_rules, cucumber_run, cucumber_testability, cucumber_preflight, cucumber_results, cucumber_links, cucumber_server_logs, groundcover_tools, mcp_servers, cucumber_import, cucumber_init, cucumber_recreation, cucumber_init_data, cucumber_initializers, cucumber_profile, cucumber_tools, cucumber_verify, cucumber_versions, cucumber_wait_steps, db_tools, integration_tools, knowledge_tools, pr_review, assistant, db_restore, jenkins_tools, skills
 from tools.jira_cli import attach_files, create_or_get_issue
@@ -85,7 +85,11 @@ def _env_int(name: str, default: int) -> int:
 
 TOKEN_USAGE_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".tmp", "token_usage.csv")
 TOKEN_USAGE_FIELDS = ["date", "ticket", "etape", "modele", "effort", "tokens_entree", "cache_ecrit", "cache_lu",
-                      "tokens_sortie", "tours", "duree_s", "cout_usd", "taille_prompt", "code_retour"]
+                      "tokens_sortie", "tours", "duree_s", "cout_usd", "taille_prompt", "code_retour",
+                      # Mesure du contexte (tools/token_measure.py) : session, reprise (--resume), cumul de la session,
+                      # contexte relu par tour, résultats d'outils de l'appel (nombre, caractères, détail par outil)
+                      "session", "reprise", "cout_session", "contexte_tour", "outils_appels", "outils_car",
+                      "outils_detail"]
 
 # Variable .env du modèle Claude par étape (vide = modèle par défaut de Claude Code)
 CLAUDE_MODEL_ENV = {
@@ -375,16 +379,33 @@ def report_token_usage(issue: str, step: str, model: str, usage: dict, prompt_ch
         return
     model_label = usage.get("modeles") or model or "défaut"
     cost = usage.get("cout_usd")
-    cost_label = f"{cost:.4f} $" if isinstance(cost, (int, float)) else "?"
+    # Reprise (--resume) : le cumul de la session dépasse le coût propre de l'appel (cucumber_cost.call_cost)
+    resumed = token_measure.is_resumed(usage)
+    # Session reprise sans cumul connu : Claude Code renvoie le coût cumulé de toute la session
+    cost_label = (f"{cost:.4f} $" + (" (cumul de la session)" if usage.get("cout_cumul_inconnu") else "")
+                  if isinstance(cost, (int, float)) else "?")
+    context = token_measure.context_per_turn(usage)
+    try:
+        tools_used = token_measure.tool_stats(usage.get("session_id", ""))
+    except Exception:  # mesure au mieux : jamais d'échec de l'étape
+        tools_used = {}
     print(f"\n[TOKENS] entrée={usage['tokens_entree']} | cache écrit={usage['cache_ecrit']} | "
           f"cache lu={usage['cache_lu']} | sortie={usage['tokens_sortie']} | tours={usage['tours']} | "
           f"coût={cost_label} | durée={usage['duree_s']} s | modèle={model_label} | effort={effort or 'défaut'} | "
-          f"prompt={prompt_chars} car.")
+          f"prompt={prompt_chars} car. | contexte/tour={round(context / 1000)}k | reprise={'oui' if resumed else 'non'}")
+    if tools_used.get("appels"):
+        print(f"[CONTEXTE] Résultats d'outils de l'appel : {tools_used['appels']} résultat(s), "
+              f"{round(tools_used['car'] / 1000)}k car. — {token_measure.detail_text(tools_used)} ; le plus gros : "
+              f"{tools_used['plus_gros'][0]} {round(tools_used['plus_gros'][1] / 1000)}k car.")
     row = {
         "date": datetime.now().isoformat(timespec="seconds"), "ticket": issue, "etape": step,
         "modele": model_label, "effort": effort, "taille_prompt": prompt_chars, "code_retour": returncode,
         **{k: usage.get(k, "") for k in ("tokens_entree", "cache_ecrit", "cache_lu", "tokens_sortie",
                                           "tours", "duree_s", "cout_usd")},
+        "session": usage.get("session_id", ""), "reprise": "oui" if resumed else "non",
+        "cout_session": usage.get("cout_session", ""), "contexte_tour": context,
+        "outils_appels": tools_used.get("appels", ""), "outils_car": tools_used.get("car", ""),
+        "outils_detail": json.dumps(tools_used.get("detail") or {}, ensure_ascii=False) if tools_used else "",
     }
     try:
         os.makedirs(os.path.dirname(TOKEN_USAGE_CSV), exist_ok=True)
