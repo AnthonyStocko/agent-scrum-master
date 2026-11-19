@@ -24,7 +24,8 @@ from tools import (cucumber_a_revoir, cucumber_java21, cucumber_simple, cucumber
 from tools import analysis_publication
 from tools.epic_tools import draft_tasks, load_epic_manifest, missing_analyses, task_analysis, task_file
 from tools.jira_tools import (
-    JiraSearchError, fetch_tickets_data, fetch_tickets_with_epic_context, get_jira_issue_summary, std_only_projects,
+    JiraSearchError, fetch_tickets_data, fetch_tickets_with_epic_context, get_jira_issue_summary, parse_issue_keys,
+    std_only_projects,
 )
 from tools.db_tools import DB_TYPES, test_connection
 from tools import pr_review, cucumber_overview, cucumber_set_aside, assistant, db_restore, skills
@@ -340,6 +341,17 @@ def run_epic_patches(epic_key: str, project: str, client_repo: str, db_schema: s
 
 def search_criteria_form(key_prefix: str) -> dict:
     """Critères de recherche Jira, mêmes champs et valeurs par défaut dans les onglets Lancement et Intégration."""
+    # Accès direct par lien ou clé : prioritaire sur tous les autres critères
+    issue_keys = parse_issue_keys(st.text_input(
+        "Lien(s) ou clé(s) Jira (optionnel) :",
+        key=f"{key_prefix}search_links",
+        placeholder="https://…/browse/PROJ-123, PROJ-456",
+        help="Collez un ou plusieurs liens de tickets Jira (ou leurs clés), séparés par des virgules ou des espaces. "
+             "S'il est renseigné, les critères ci-dessous (projet, équipe, statuts, labels) sont ignorés."
+    ))
+    if issue_keys:
+        st.caption("Recherche directe : " + ", ".join(issue_keys) + " — les autres critères sont ignorés.")
+
     # Recherche rapide « épopées ouvertes de l'équipe » (onglet Configuration)
     open_epics_team = os.getenv("JIRA_OPEN_EPICS_TEAM", "").strip()
     open_epics_status = os.getenv("JIRA_OPEN_EPICS_STATUS", "").strip()
@@ -347,11 +359,12 @@ def search_criteria_form(key_prefix: str) -> dict:
         f"Épopées au statut « {open_epics_status} » de l'équipe {open_epics_team}"
         if open_epics_team and open_epics_status else "Épopées ouvertes de mon équipe",
         key=f"{key_prefix}open_epics_only",
-        disabled=not (open_epics_team and open_epics_status),
+        disabled=not (open_epics_team and open_epics_status) or bool(issue_keys),
         help="Si coché, la recherche porte sur les épopées du projet cible à ce statut pour cette équipe : "
              "les critères Équipe, Statuts et Labels ci-dessous sont ignorés. "
              "Équipe et statut : JIRA_OPEN_EPICS_TEAM et JIRA_OPEN_EPICS_STATUS (onglet Configuration)."
-    ) and bool(open_epics_team and open_epics_status)
+    ) and bool(open_epics_team and open_epics_status) and not issue_keys
+    disable_filters = open_epics_only or bool(issue_keys)
 
     # Valeurs par défaut du .env posées une fois : la saisie est gardée quand on change de page (PERSISTENT_KEYS)
     for name, env_name in (("search_project", "JIRA_PROJECT_KEY"), ("search_team", "JIRA_SEARCH_TEAM"),
@@ -362,13 +375,14 @@ def search_criteria_form(key_prefix: str) -> dict:
         jira_project_input = st.text_input(
             "Projet Jira cible :",
             key=f"{key_prefix}search_project",
-            help="Clé du projet Jira (ex. PROJ)."
+            help="Clé du projet Jira (ex. PROJ).",
+            disabled=bool(issue_keys)
         )
         jira_team_input = st.text_input(
             "Équipe / Composant (Optionnel) :",
             key=f"{key_prefix}search_team",
             help="Composant Jira ou équipe Atlassian (ex. WMS, Socle...)",
-            disabled=open_epics_only
+            disabled=disable_filters
         )
 
     with col2:
@@ -376,17 +390,19 @@ def search_criteria_form(key_prefix: str) -> dict:
             "États / Statuts (Séparés par une virgule) :",
             key=f"{key_prefix}search_statuses",
             help="Ex: Analysée, En cours, A traiter (laissez vide pour tous les états)",
-            disabled=open_epics_only
+            disabled=disable_filters
         )
         jira_label_input = st.text_input(
             "Labels (Séparés par une virgule) :",
             key=f"{key_prefix}search_labels",
             help="Ex. le label d'attente de l'équipe (laissez vide si aucun label requis)",
-            disabled=open_epics_only
+            disabled=disable_filters
         )
 
     return {
-        "project_key": jira_project_input.strip().upper(),
+        # Recherche par lien : projet du premier ticket (repris pour la suite du traitement)
+        "project_key": issue_keys[0].rsplit("-", 1)[0] if issue_keys else jira_project_input.strip().upper(),
+        "issue_keys": issue_keys,
         "statuses": [s.strip() for s in jira_status_input.split(",") if s.strip()],
         "labels": [l.strip() for l in jira_label_input.split(",") if l.strip()],
         "team": jira_team_input.strip(),
@@ -398,6 +414,8 @@ def search_criteria_form(key_prefix: str) -> dict:
 
 def search_jira_tickets(criteria: dict) -> list:
     """Tickets correspondant aux critères de search_criteria_form. Lève JiraSearchError."""
+    if criteria.get("issue_keys"):
+        return fetch_tickets_data(project_key=criteria["project_key"], issue_keys=criteria["issue_keys"])
     if criteria["open_epics_only"]:
         return fetch_tickets_data(
             project_key=criteria["project_key"],
@@ -447,7 +465,7 @@ PERSISTENT_KEYS = ("cucumber_project", "cucumber_repo", "cucumber_client_name", 
                    "cucumber_application", "cucumber_std_repo", "cucumber_source_schema",
                    "cs_project", "cs_repo", "cs_client", "cs_application", "cs_source_schema", "cs_std_repo",
                    "integ_selected") + tuple(f"{prefix}{name}" for prefix in ("", "integ_") for name in (
-                       "open_epics_only", "search_project", "search_team", "search_statuses", "search_labels"))
+                       "open_epics_only", "search_links", "search_project", "search_team", "search_statuses", "search_labels"))
 
 
 def keep_page_state() -> None:

@@ -58,18 +58,31 @@ def _status_jql_values(api: str, auth: tuple, statuses: list) -> list:
     return list(dict.fromkeys(values))
 
 
+_ISSUE_KEY_RE = re.compile(r"\b[A-Z][A-Z0-9_]+-\d+\b")
+
+
+def parse_issue_keys(text: str) -> list:
+    """
+    Clés Jira tirées de liens (…/browse/PROJ-123, …?selectedIssue=PROJ-123) ou de clés saisies telles quelles,
+    séparés par des virgules, espaces ou retours à la ligne. Ordre de saisie gardé, sans doublon.
+    """
+    return list(dict.fromkeys(_ISSUE_KEY_RE.findall((text or "").upper())))
+
+
 def fetch_tickets_data(
     project_key: str = None,
     statuses: list = None,
     labels: list = None,
     team: str = None,
     epics_only: bool = False,
-    atlassian_team: str = None
+    atlassian_team: str = None,
+    issue_keys: list = None
 ) -> list:
     """
     Récupère les tickets Jira sous forme de liste de dictionnaires (clé, titre/summary, statut, labels, épique).
     `epics_only` restreint la recherche aux épopées ; `atlassian_team` filtre strictement sur un composant
     ou une équipe Atlassian (champ Team), contrairement à `team` qui cherche aussi dans le texte.
+    `issue_keys` : tickets demandés directement (lien ou clé) ; les autres critères sont alors ignorés.
     """
     domain = os.getenv("JIRA_DOMAIN", "").replace("https://", "").replace("http://", "").strip("/")
     email = os.getenv("JIRA_EMAIL", "").strip()
@@ -84,6 +97,10 @@ def fetch_tickets_data(
     headers = {"Accept": "application/json", "Content-Type": "application/json"}
 
     jql_clauses = [f'project = "{project}"']
+
+    if issue_keys:
+        jql_clauses = [f'key IN ({", ".join(issue_keys)})']
+        epics_only, atlassian_team, statuses, labels, team = False, None, None, None, None
 
     if epics_only:
         # hierarchyLevel = 1 : épopées, quel que soit le nom (traduit ou non) du type de ticket
