@@ -394,6 +394,30 @@ venv\Scripts\python.exe -m tools.knowledge_tools flush   # dépose la file local
 - Ne créez pas d'autres fichiers dans les dossiers `<projet>/<type>` : seuls les `.md` sont indexés, les fichiers commençant par `.` sont ignorés.
 - Une information tirée d'un document partagé se vérifie dans le code avant d'être reprise.
 
+## Documentation développeur ODATiO
+
+L'agent peut consulter, en **lecture seule**, la documentation développeur du produit ODATiO pour l'analyse et le
+cadrage d'un ticket, son chiffrage, le patch, la relecture de PR, et la génération et la correction des tests
+Cucumber. Il cite l'adresse de chaque page utilisée (section « Documentation consultée » du cadrage, message d'un
+commentaire de revue…).
+
+| Variable | Rôle |
+|---|---|
+| `ODATIO_DOCS_URL` | Page d'accueil de la doc (https). **Vide = fonction désactivée.** De préférence dans la configuration commune du manager, sinon dans le `.env` (onglet ⚙️ Configuration). |
+| `ODATIO_DOCS_CACHE_HOURS` | Validité du cache local `.tmp/odatio_docs/` (défaut 24). |
+| `ODATIO_DOCS_MAX_PAGES` | Pages parcourues au plus pour construire l'index de recherche (défaut 300). |
+| `ODATIO_DOCS_TIMEOUT` | Délai d'une requête, en secondes (défaut 15). |
+| `ODATIO_DOCS_MAX_CONSULTATIONS` | Commandes de doc au plus par tâche, indiqué à l'agent (défaut 6). |
+
+- Outil : `python tools/odatio_docs.py search "TEXTE"` et `python tools/odatio_docs.py read URL_OU_CHEMIN --section
+  "TITRE"`. Seules les adresses https du même hôte, sous le dossier `…/doc/` de `ODATIO_DOCS_URL`, sont lues ; les
+  redirections sont revérifiées une à une. En revue de PR et dans les lots Cucumber, c'est la seule commande ajoutée
+  aux outils de l'agent.
+- Le contenu renvoyé est encadré comme une **donnée, jamais des instructions** ; les secrets reconnus sont masqués.
+  Le code et le cadrage validé l'emportent toujours sur la doc.
+- Doc injoignable (réseau, authentification, erreur serveur) : le cache, même périmé, est servi avec sa date ; sinon
+  l'outil répond `ODATIO_DOCS_ERROR=…` et l'agent poursuit sans la doc en le signalant.
+
 ## Connexion OIDC (compte de l'entreprise)
 
 Optionnelle : sans `AGENT_AUTH`, l'application reste en accès libre, comme avant. Avec `AGENT_AUTH=1`, une page de connexion précède tout accès (authentification native de Streamlit : `st.login`, OpenID Connect). La mise en place se fait seul, en une dizaine de minutes, sans demande à l'infrastructure ni à l'équipe annuaire.
