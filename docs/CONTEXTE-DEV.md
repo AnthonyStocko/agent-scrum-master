@@ -85,6 +85,15 @@ py -3.12 -m venv .venv
   analyses, ticket, Cucumber, builds Jenkins). Aucune écriture (vérifié par `tests/test_lecture_manager.py`).
   Tout affichage des outils part sur stderr, stdout étant le canal MCP. Ne jamais le déclarer dans un `.mcp.json`
   à la racine.
+- **Mesure de la consommation** (`tools/token_measure.py`, sans token) : chaque appel `claude` ajoute à
+  `.tmp/token_usage.csv` la session, la reprise (`--resume`), le cumul de la session, le contexte moyen relu par
+  tour (`(entrée + cache écrit + cache lu) / tours`) et les résultats d'outils de l'appel par outil (Bash classé :
+  base, logs, compilation, git, Jira), lus dans la transcription de Claude Code
+  (`<CLAUDE_CONFIG_DIR ou ~/.claude>/projects/*/<session>.jsonl` ; pour une session reprise, seules les lignes
+  nouvelles, d'après `.tmp/token_transcripts.json`). Au mieux : aucune erreur ne remonte à l'étape. Rapport :
+  `.venv\Scripts\python.exe -m tools.token_report [--depuis AAAA-MM-JJ] [--ticket CLE] [--etape cucumber]`.
+  C'est la référence pour juger les évolutions du contexte et de la mémoire (corrections, mémoire par spécifique,
+  prévention avant écriture).
 
 ## 3. Prompts, outils et évals
 
