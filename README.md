@@ -299,7 +299,8 @@ cet agent (Cucumber, modèles, base de travail…) restent dans son `.env`. Lanc
 `mcp_lecture.py` est le serveur MCP qu'interroge agent-manager-savoye pour répondre à une question rapide sans
 ouvrir l'IHM : analyses présentes et état (publiée ou brouillon à valider), ticket Jira (titre, statut,
 responsable, épopée ; avec le compte de lecture `JIRA_READ_*` s'il est configuré), clients Cucumber et génération
-en cours, derniers builds Jenkins des jobs Cucumber. **Rien n'y écrit.** Le manager le lance lui-même avec le venv
+en cours, derniers builds Jenkins des jobs Cucumber, patchs livrés (registre local `.tmp/livraisons.jsonl`, rempli
+à la fin de chaque étape patch avec la présence des fichiers en pièce jointe Jira). **Rien n'y écrit.** Le manager le lance lui-même avec le venv
 de l'agent ; ne le déclare pas dans un `.mcp.json` à la racine, que le CLI `claude` de l'agent chargerait.
 
 ## Connaissances partagées

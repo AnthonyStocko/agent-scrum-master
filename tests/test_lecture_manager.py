@@ -1,11 +1,14 @@
 """Consultations en lecture seule pour agent-manager-savoye (tools/lecture_manager.py, mcp_lecture.py)."""
+import asyncio
+import json
 import os
 import re
+from datetime import datetime, timedelta
 from unittest import mock
 
 import pytest
 
-from tools import analysis_publication, lecture_manager as lecture
+from tools import analysis_publication, livraisons, lecture_manager as lecture
 
 
 @pytest.fixture
@@ -68,9 +71,51 @@ def test_cucumber(monkeypatch):
     assert "client-b : aucune génération en cours" in texte and "_standard" not in texte
 
 
+def test_patchs_livres(tmp_path):
+    registre = str(tmp_path / "livraisons.jsonl")
+    assert "Aucun patch livré ces 7 derniers jours" in lecture.patchs(7, registre)
+    maintenant = datetime.now()
+    livraisons.noter("ODA-1", ["ODA-1-std.patch"], {"ODA-1-std.patch"}, quand=maintenant - timedelta(hours=2),
+                     chemin=registre)
+    livraisons.noter("ODA-2", ["ODA-2-std.patch", "ODA-2-client-x.patch"], {"ODA-2-std.patch"},
+                     quand=maintenant - timedelta(hours=1), chemin=registre)
+    livraisons.noter("ODA-3", ["ODA-3-std.patch"], set(), "Jira illisible (Timeout)", chemin=registre)
+    livraisons.noter("ODA-4", ["ODA-4-std.patch"], {"ODA-4-std.patch"}, quand=maintenant - timedelta(days=20),
+                     chemin=registre)
+    lignes = lecture.patchs(7, registre).splitlines()
+    assert lignes[0] == "Patchs livrés ces 7 derniers jours (agent Scrum Master) :"
+    assert lignes[1].startswith("- ODA-3 (livré le ") and lignes[1].endswith(
+        ": ODA-3-std.patch — pièce jointe non vérifiée (Jira illisible (Timeout))")
+    assert lignes[2].endswith(": ODA-2-std.patch, ODA-2-client-x.patch — NON joint dans Jira : ODA-2-client-x.patch")
+    debut = (maintenant - timedelta(hours=2)).strftime("%Y-%m-%d %H:%M")
+    assert lignes[3] == f"- ODA-1 (livré le {debut}) : ODA-1-std.patch — en pièce jointe Jira"
+    assert len(lignes) == 4                                               # ODA-4 hors fenêtre
+    assert "ODA-4" in lecture.patchs(30, registre)
+    assert "ces 90 derniers jours" in lecture.patchs(1000, registre)      # borné
+    with pytest.raises(lecture.LectureErreur):
+        lecture.patchs("beaucoup", registre)
+
+
+def test_patchs_outil_mcp(monkeypatch, tmp_path):
+    """L'outil est exposé par le serveur MCP et lit le registre (sans passer par un client stdio)."""
+    pytest.importorskip("mcp.server.mcpserver")
+    monkeypatch.chdir(os.getcwd())                                   # mcp_lecture change de dossier à l'import
+    monkeypatch.setattr("dotenv.load_dotenv", lambda *a, **k: False)  # et charge le .env local : neutralisé
+    import mcp_lecture
+    registre = str(tmp_path / "livraisons.jsonl")
+    livraisons.noter("ODA-1", ["ODA-1-std.patch"], {"ODA-1-std.patch"}, chemin=registre)
+    monkeypatch.setattr(livraisons, "FICHIER", registre)
+    serveur = mcp_lecture.creer_serveur()
+    outils = {o.name: o for o in asyncio.run(serveur.list_tools())}
+    assert "patchs" in outils and "jours" in json.dumps(outils["patchs"].input_schema)
+    resultat = asyncio.run(serveur.call_tool("patchs", {"jours": 3}))
+    assert "ODA-1 (livré le" in json.dumps(resultat, default=str, ensure_ascii=False)
+
+
 def test_aucune_ecriture():
     """Le module ne fait que des lectures : aucun appel HTTP autre que GET, aucune fonction d'écriture de l'agent."""
     for fichier in ("tools/lecture_manager.py", "mcp_lecture.py"):
         source = open(os.path.join(lecture.WORKSPACE_DIR, fichier), encoding="utf-8").read()
         assert not re.search(r"requests\.(post|put|delete|patch)|trigger_|publish|validate\(|save_draft|"
-                             r"record_publication|acquire\(|release\(|write_env|open\([^)]*['\"][wa]", source), fichier
+                             r"record_publication|acquire\(|release\(|write_env|open\([^)]*['\"][wa]|"
+                             r"livraisons\.noter", source), fichier

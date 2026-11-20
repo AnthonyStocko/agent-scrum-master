@@ -12,7 +12,7 @@ from datetime import datetime
 
 import requests
 
-from tools import analysis_publication, assistant, cucumber_lock
+from tools import analysis_publication, assistant, cucumber_lock, livraisons
 from tools.jenkins_tools import recent_builds
 from tools.secret_tools import mask_secrets
 
@@ -20,6 +20,7 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CLE = re.compile(r"^[A-Z][A-Z0-9_]+-\d+$")
 JOBS = ("JENKINS_CUCUMBER_JOB", "CUCUMBER_VERIFY_JOB", "CUCUMBER_RUN_JOB")
 ANALYSES_MAX = 30
+PATCHS_JOURS_MAX = 90
 
 
 class LectureErreur(Exception):
@@ -132,3 +133,35 @@ def builds(job: str = "", nombre: int = 5) -> str:
             lignes.append(f"  #{b['numero']} {resultat} — {debut}, {round((b.get('duree') or 0) / 60000)} min")
         blocs.append(f"{nom} :\n" + ("\n".join(lignes) or "  (aucun build lisible)"))
     return _masque("\n".join(blocs) or "Aucun job Jenkins configuré dans l'agent Scrum Master.")
+
+
+def patchs(jours: int = 7, chemin: str = "") -> str:
+    """Patchs livrés ces derniers jours, d'après le registre local des livraisons écrit par l'étape patch.
+
+    Format (contrat avec agent-manager-savoye, une ligne par livraison, de la plus récente à la plus ancienne) :
+    ``- <CLÉ> (livré le AAAA-MM-JJ HH:MM) : <fichier.patch>[, …] — <état>`` où l'état est
+    ``en pièce jointe Jira``, ``NON joint dans Jira : <fichiers>`` ou ``pièce jointe non vérifiée (<raison>)``.
+    """
+    try:
+        jours = max(1, min(int(jours or 7), PATCHS_JOURS_MAX))
+    except (TypeError, ValueError):
+        raise LectureErreur(f"Nombre de jours invalide : « {jours} ».")
+    try:
+        entrees = livraisons.lire(jours, chemin or livraisons.FICHIER)
+    except livraisons.RegistreErreur as e:
+        raise LectureErreur(str(e))
+    if not entrees:
+        return (f"Aucun patch livré ces {jours} derniers jours dans l'agent Scrum Master (registre des livraisons, "
+                f"rempli à chaque étape patch).")
+    lignes = []
+    for e in entrees:
+        manquants = [f for f in e["fichiers"] if f not in e["pieces_jointes"]]
+        if e["verification"] != "ok":
+            etat = f"pièce jointe non vérifiée ({e['verification'] or 'raison inconnue'})"
+        elif manquants:
+            etat = "NON joint dans Jira : " + ", ".join(manquants)
+        else:
+            etat = "en pièce jointe Jira"
+        lignes.append(f"- {e['ticket']} (livré le {e['date'][:16].replace('T', ' ')}) : {', '.join(e['fichiers'])}"
+                      f" — {etat}")
+    return _masque(f"Patchs livrés ces {jours} derniers jours (agent Scrum Master) :\n" + "\n".join(lignes))
