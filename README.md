@@ -50,8 +50,8 @@ Modèle : alias (`sonnet`, `opus`, `haiku`) ou identifiant complet. Effort : `lo
 ## Installation
 
 ```powershell
-git clone https://github.com/AnthonyStocko/agent-savoye.git
-cd agent-savoye
+git clone https://git.kiscloud.io/scm/tai/scrum-ai.git agent-scrum-master
+cd agent-scrum-master
 py -3.12 -m venv venv
 venv\Scripts\python.exe -m pip install -r requirements.txt
 copy .env.example .env
