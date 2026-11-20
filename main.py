@@ -26,7 +26,7 @@ from tools.epic_tools import (
     sync_epic_tasks, attach_existing_analyses, missing_analyses,
 )
 from tools import (analysis_publication, cucumber_java21, cucumber_repo_setup, cucumber_simple, cucumber_simple_init,
-                   jira_guard, odatio_docs)
+                   jira_guard, livraisons, odatio_docs)
 from tools.jira_tools import (
     fetch_application_tickets, find_jira_issue_by_summary, get_epic_children, get_full_jira_issue_context,
     get_jira_issue_details,
@@ -2081,6 +2081,9 @@ def main():
                                 final_cadrage=cadrage_content, jira_context=jira_context):
                     print(f"[MÉMOIRE] Livrable validé indexé : {', '.join(patch_paths)}.")
                 publish_release_note(target_issue, release_note_file, run_started_at)
+                # Registre local des livraisons (lu par agent-manager-savoye) : pièces jointes vérifiées en lecture
+                if livraisons.noter_patch(target_issue, patch_paths):
+                    print(f"[LIVRAISON] Patch(s) de {target_issue} notés dans le registre des livraisons.")
                 share_knowledge(patch_recap(target_issue, patch_paths, stdout_output), target_project, "recap-patch",
                                 knowledge_subject, **knowledge)
                 if produced(release_note_file, run_started_at):

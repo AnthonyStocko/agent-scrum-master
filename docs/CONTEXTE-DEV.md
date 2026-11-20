@@ -32,7 +32,7 @@ ce fichier est versionné dans les dépôts clients, **ne pas le renommer** sans
 | `besoin` | Section « Intégration du besoin » de la description Jira | Directement à la fin de l'étape (`finalize_besoin`) |
 | `cadrage`, `refine`, `cadrage-reponses` | Brouillon local `<TICKET>-cadrage.md` | **Jira en lecture seule** (`jira_guard`). Publication dans Jira au clic « Valider » de l'IHM (`analysis_publication`) |
 | `epic-cadrage` puis `epic-sync` | Manifeste local, puis tâches enfants Jira | Création Jira seulement après validation du découpage |
-| `patch` | Branche locale, `<TICKET>-*.patch`, pièce jointe et release note dans Jira | Prompt `patch.md` / `patch_cucumber.md` |
+| `patch` | Branche locale, `<TICKET>-*.patch`, pièce jointe et release note dans Jira ; registre local `.tmp/livraisons.jsonl` | Prompt `patch.md` / `patch_cucumber.md` ; pièces jointes relues (lecture) pour le registre |
 | `generate-cucumber-postmerge` | Ticket `[CUCUMBER]` (SPEC) et patch joint | Webhook ou `--poll` (`webhook_server.py`), `WEBHOOK_DRY_RUN`, anti-boucle `[CUCUMBER]` |
 | `review-pr` | Rien, puis commentaires Bitbucket | Commentaire par commentaire, au clic dans l'IHM |
 | `generate-cucumber-client` | Commits et push sur `<client>-cucumber` uniquement, jobs Jenkins, patchs | Verrou par client, `--run-dry`, `--run-no-push`, confirmation de l'environnement dans l'IHM, `cucumber_delivery` |
@@ -82,9 +82,16 @@ py -3.12 -m venv .venv
   `tools/db_tools.py` chargent le `.env` sans `override` : l'environnement hérité l'emporte déjà. Lancé seul,
   rien ne change.
 - **`mcp_lecture.py`** : serveur MCP stdio en lecture seule pour le manager (`tools/lecture_manager.py` :
-  analyses, ticket, Cucumber, builds Jenkins). Aucune écriture (vérifié par `tests/test_lecture_manager.py`).
-  Tout affichage des outils part sur stderr, stdout étant le canal MCP. Ne jamais le déclarer dans un `.mcp.json`
-  à la racine.
+  analyses, ticket, Cucumber, builds Jenkins, patchs livrés). Aucune écriture (vérifié par
+  `tests/test_lecture_manager.py`). Tout affichage des outils part sur stderr, stdout étant le canal MCP. Ne jamais
+  le déclarer dans un `.mcp.json` à la racine. Le venv qui le lance doit avoir `mcp>=2` (`requirements.txt`).
+- **Registre des livraisons** (`tools/livraisons.py`, `.tmp/livraisons.jsonl`, non versionné) : à la fin d'une
+  étape `patch` qui a produit au moins un `.patch`, `livraisons.noter_patch` relit dans Jira les pièces jointes du
+  ticket (lecture seule : c'est Claude qui joint les fichiers, via le prompt) et ajoute une ligne
+  `{ticket, date, fichiers, pieces_jointes, verification}`. Au mieux : aucune erreur ne remonte à l'étape ;
+  noms de fichiers seulement, 2 000 lignes au plus. Lu par l'outil MCP `patchs(jours)` (1 à 90 jours) pour le
+  bloc « Patchs livrés » du tableau de bord du manager. Le format de sa réponse est un contrat avec
+  `agent-manager-savoye` (docstring de `lecture_manager.patchs`) : le changer, c'est changer le manager.
 - **Liens préremplis du manager** (`tools/lien_manager.py`, `app.apply_manager_link`) : une adresse
   `?source=manager&page=…&ticket=…&projet=…&question=…&contexte=…` ouvre la page demandée (à défaut Assistant pour
   une question, Lancement pour un ticket), pose le ticket dans « Lancement » comme après une recherche, choisit le

@@ -1,6 +1,6 @@
 """
 Serveur MCP (stdio) en LECTURE SEULE pour agent-manager-savoye : état des analyses, d'un ticket Jira, de Cucumber
-et des derniers builds Jenkins (tools/lecture_manager.py). Rien n'y écrit.
+et des derniers builds Jenkins, patchs livrés (tools/lecture_manager.py). Rien n'y écrit.
 
 Lancé par le manager avec le python du venv de l'agent, dans le dossier de l'agent :
   .venv\\Scripts\\python.exe mcp_lecture.py
@@ -34,7 +34,7 @@ def _appel(fonction, *args) -> str:
 
 def creer_serveur() -> MCPServer:
     serveur = MCPServer("scrum-master", instructions="Agent Scrum Master, en lecture seule : état des analyses de "
-                                                     "tickets, de Cucumber et des builds Jenkins.")
+                                                     "tickets, de Cucumber, des builds Jenkins et des patchs livrés.")
 
     @serveur.tool(description="Analyses (cadrages) présentes dans l'agent, avec leur état : publiée dans Jira ou "
                               "brouillon à valider.")
@@ -58,6 +58,11 @@ def creer_serveur() -> MCPServer:
                               "(EN COURS si le build tourne), début, durée. 'job' vide : tous les jobs configurés.")
     def builds_jenkins(job: str = "", nombre: int = 5) -> str:
         return _appel(lecture.builds, job, nombre)
+
+    @serveur.tool(description="Patchs livrés ces derniers jours (registre local de l'étape patch) : ticket, date, "
+                              "fichiers et présence en pièce jointe Jira. 'jours' : de 1 à 90, 7 par défaut.")
+    def patchs(jours: int = 7) -> str:
+        return _appel(lecture.patchs, jours)
 
     return serveur
 
