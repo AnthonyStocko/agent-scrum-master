@@ -84,6 +84,99 @@ def test_checkout_clones_only_the_modified_repo_without_credentials(monkeypatch,
     assert (target / "f.txt").read_text() == "v2\n"
 
 
+def test_default_candidates_are_unchanged_without_branches(monkeypatch):
+    monkeypatch.delenv("STD_BASE_BRANCHES", raising=False)
+    assert bc.base_candidates() == ["origin/dev", "origin/development", "HEAD"]
+    assert bc.base_candidates("") == bc.base_candidates()
+
+
+class RecordingStd(FakeStd):
+    def __init__(self):
+        super().__init__()
+        self.files_by["clix-tools"] = ["t/Tool.java"]
+        self.seen = []
+
+    def ref(self, repo, candidates):
+        self.seen.append(list(candidates))
+        return "def4567890123"
+
+    def search(self, query):
+        return [("clix-tools", "t/Tool.java"), ("wms-content-backend", "a/Action.java")]
+
+
+def test_branches_option_is_passed_as_is_to_the_reader():
+    std = RecordingStd()
+    bc.cmd_files(std, ns(repo="clix-tools", prefix="", like="", max=10, branches="origin/integration", repos=""))
+    assert std.seen == [["origin/integration"]]
+    bc.cmd_show(std, ns(repo="clix-tools", path="t/Tool.java", start=1, end=0,
+                        branches="origin/release/26.24,v26.24,HEAD", repos=""))
+    assert std.seen[-1] == ["origin/release/26.24", "v26.24", "HEAD"]
+
+
+def test_repos_option_limits_the_readable_repositories():
+    std = RecordingStd()
+    assert bc.cmd_repos(std, ns(like="", repos="clix-tools")) == ["clix-tools"]
+    assert bc.cmd_search(std, ns(query="Tool", limit=5, repos="clix-tools")) == ["clix-tools/t/Tool.java"]
+    try:
+        bc.cmd_files(std, ns(repo="wms-content-backend", prefix="", like="", max=10, branches="", repos="clix-tools"))
+        raise AssertionError("erreur attendue")
+    except bc.BitbucketUnavailable as e:
+        assert "hors du périmètre" in str(e)
+
+
+def test_main_reads_global_options(monkeypatch, capsys):
+    std = RecordingStd()
+    monkeypatch.setattr(bc, "standard", lambda project: std)
+    assert bc.main(["--project", "CLIX", "--branches", "origin/integration", "--repos", "clix-tools",
+                    "files", "clix-tools"]) == 0
+    assert std.seen == [["origin/integration"]] and "t/Tool.java" in capsys.readouterr().out
+    assert bc.main(["--repos", "clix-tools", "files", "wms-content-backend"]) == 1
+    assert "BITBUCKET_ERROR=" in capsys.readouterr().out
+
+
+BASE = "https://git.example"
+
+
+def test_client_source_from_urls():
+    assert bc.client_source(f"{BASE}/projects/CLIX", BASE) == ("CLIX", None)
+    assert bc.client_source(f"{BASE}/projects/CLIX/", BASE) == ("CLIX", None)
+    assert bc.client_source(f"{BASE}/projects/CLIX/repos/clix-app/browse", BASE) == ("CLIX", ["clix-app"])
+    assert bc.client_source(f"{BASE}/scm/clix/clix-app.git", BASE) == ("CLIX", ["clix-app"])
+    assert bc.client_source("ssh://git@git.example:7999/clix/clix-app.git", BASE) == ("CLIX", ["clix-app"])
+    assert bc.client_source("https://other.example/scm/clix/clix-app.git", BASE) == ("", None)
+    assert bc.client_source("", BASE) == ("", None)
+    assert bc.client_source("STD_ONLY", BASE) == ("", None)
+
+
+def _clone(path, remote=""):
+    path.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(path)], check=True)
+    if remote:
+        subprocess.run(["git", "remote", "add", "origin", remote], cwd=path, check=True)
+    return path
+
+
+def test_client_source_from_a_local_clone(tmp_path):
+    clone = _clone(tmp_path / "clix-app", f"{BASE}/scm/clix/clix-app.git")
+    assert bc.client_source(str(clone), BASE) == ("CLIX", ["clix-app"])
+
+
+def test_client_source_from_a_folder_of_clones(tmp_path):
+    _clone(tmp_path / "CLIX" / "clix-app", f"{BASE}/scm/clix/clix-app.git")
+    _clone(tmp_path / "CLIX" / "clix-ui", f"{BASE}/scm/clix/clix-ui.git")
+    (tmp_path / "CLIX" / "notes").mkdir()
+    assert bc.client_source(str(tmp_path / "CLIX"), BASE) == ("CLIX", ["clix-app", "clix-ui"])
+
+
+def test_client_source_unresolved_local_folders(tmp_path):
+    _clone(tmp_path / "mixed" / "clix-app", f"{BASE}/scm/clix/clix-app.git")
+    _clone(tmp_path / "mixed" / "other-app", f"{BASE}/scm/othr/other-app.git")
+    assert bc.client_source(str(tmp_path / "mixed"), BASE) == ("", None)
+    assert bc.client_source(str(_clone(tmp_path / "no-remote")), BASE) == ("", None)
+    (tmp_path / "empty").mkdir()
+    assert bc.client_source(str(tmp_path / "empty"), BASE) == ("", None)
+
+
 def test_prompt_block_renders():
     import importlib, io, sys
     saved = sys.stdout, sys.stderr
