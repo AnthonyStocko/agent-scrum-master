@@ -133,7 +133,15 @@ py -3.12 -m venv .venv
   - `cucumber_recettes.md` est injecté par `tools/cucumber_tools.py`, sans appel au LLM ;
   - `cucumber_init_*.md` est chargé par `write_init_steps` (`main.py` vers les lignes 3056, 3134 et 5715).
 - **Blocs communs** : `token_saving_rules.md`, `db_access.md`, `logs_access.md`, `logs_mcp_access.md`,
-  `cucumber_enabled.md`, `cucumber_disabled.md`, `release_note.md`, `std_bitbucket_code.md`.
+  `cucumber_enabled.md`, `cucumber_disabled.md`, `release_note.md`, `std_bitbucket_code.md`,
+  `bitbucket_code_cadrage.md`.
+- **Source du code par flux** : socle seul (`STD_ONLY_PROJECTS`) : Standard lu dans Bitbucket à toutes les étapes
+  (`std_bitbucket_code.md`, `checkout` au patch). Cadrage d'un ticket client (ni socle seul, ni Cucumber) : Standard
+  et dépôt client lus dans Bitbucket (`cadrage_remote_plan`, `bitbucket_code_cadrage.md`, branche `integration`
+  pour le client), le dépôt client étant retrouvé par son URL ou par le remote `origin` du chemin local
+  (`bitbucket_code.client_source`) ; sans `BITBUCKET_URL`, jeton, adresse Bitbucket du client ou API lisible :
+  copies locales et ligne `[CODE CADRAGE] Mode local : …`. `refine`, `epic-cadrage` et `patch` d'un ticket client
+  gardent les copies locales (`ensure_local_repo`).
 - **Lots Cucumber** :
   - `cucumber_client_lot_systeme.md` contient la partie fixe. Elle est passée en `--append-system-prompt-file`
     et mise en cache. **Toute modification invalide ce cache.**
@@ -210,7 +218,8 @@ les règles avant et après la modification.
 | Patch : jamais de question ; le cadrage fait foi ; branche `<ISSUE>_dev_…` ; `xmlHash` recalculé | `patch.md:5-16`, `patch_cucumber.md` |
 | Release note : 2 à 4 phrases, sans nom de classe, de fichier, de branche ni de ticket | `release_note.md:1` |
 | Post-merge : ticket uniquement par `jira_cli` ; aucun tag de désactivation ni scénario Standard modifié ; commit local, **jamais de push** | `postmerge.md:34-51` |
-| Standard lu sur Bitbucket uniquement ; `checkout` seulement à l'étape patch ; aucun push | `std_bitbucket_code.md:1-8` |
+| Standard lu sur Bitbucket uniquement ; `checkout` seulement à l'étape patch ; aucun push (socle seul) | `std_bitbucket_code.md:1-8` |
+| Cadrage d'un ticket client : Standard et client lus sur Bitbucket uniquement, aucun `checkout` ni copie locale ; repli local journalisé si Bitbucket n'est pas configuré | `bitbucket_code_cadrage.md`, `main.py` (`cadrage_remote_plan`) |
 | Base : seul accès fourni, pas de `SELECT *`, `WHERE` obligatoire, aucune colonne inventée, **aucune donnée nominative** | `db_access.md:2-16` |
 | Logs : heures UTC, fenêtres bornées, 6 recherches au plus, citations mot pour mot, aucune donnée nominative | `logs_access.md`, `logs_mcp_access.md` |
 | Lots Cucumber : un scénario doit échouer sur le Standard seul, avoir une assertion métier, ne pas être un doublon ; un scénario négatif a un témoin positif | `cucumber_client_lot_systeme.md:35-59` |
