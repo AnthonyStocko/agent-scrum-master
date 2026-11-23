@@ -14,12 +14,20 @@ par commit, donc jamais périmés).
   python tools/bitbucket_code.py checkout DEPOT
       étape patch seulement : copie locale À JOUR (clone ou fetch, puis branche de base) du seul dépôt à modifier,
       dans .tmp/std_<PROJET>_travail/<DEPOT> ; jamais de push (aucun identifiant n'est enregistré dans la copie).
+
+Options globales (avant la commande) :
+  --project CLE        projet Bitbucket lu (défaut : celui de BITBUCKET_STD_REPO_PATH)
+  --branches R1,R2     références candidates, dans l'ordre (« origin/integration », « origin/release/26.24 »,
+                       « v26.24 » pour un tag, « HEAD » pour la branche par défaut) ; défaut : STD_BASE_BRANCHES puis HEAD
+  --repos D1,D2        dépôts autorisés (les autres sont refusés ou écartés) ; défaut : tous les dépôts du projet
+Cadrage d'un ticket client : main.py lit ainsi le Standard et le dépôt client (client_source), sans copie locale.
 """
 import argparse
 import os
 import re
 import subprocess
 import sys
+from urllib.parse import urlsplit
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -33,9 +41,72 @@ except ImportError:  # pragma: no cover
 from tools.bitbucket_std import BitbucketUnavailable, RemoteStandard, project_key  # noqa: E402
 
 
-def base_candidates() -> list:
-    names = [n.strip() for n in os.getenv("STD_BASE_BRANCHES", "dev,development").split(",") if n.strip()]
+def _split(text: str) -> list:
+    return [n.strip() for n in (text or "").split(",") if n.strip()]
+
+
+def base_candidates(branches: str = "") -> list:
+    """Références candidates : `branches` telles quelles si fournies, sinon STD_BASE_BRANCHES puis HEAD."""
+    if _split(branches):
+        return _split(branches)
+    names = _split(os.getenv("STD_BASE_BRANCHES", "dev,development"))
     return [f"origin/{n}" for n in names] + ["HEAD"]
+
+
+def _allowed(args) -> list:
+    """Dépôts autorisés par --repos ([] : tous)."""
+    return _split(getattr(args, "repos", ""))
+
+
+def _host(url: str) -> str:
+    if url.startswith("git@"):
+        return url[4:].split(":", 1)[0].lower()
+    return (urlsplit(url).hostname or "").lower()
+
+
+def _from_url(url: str, base_url: str = "") -> tuple:
+    """(PROJET, [dépôt] ou None pour le projet entier) d'une adresse Bitbucket ; ('', None) sinon."""
+    text = (url or "").strip().rstrip("/")
+    if not text:
+        return "", None
+    if base_url and _host(text) != _host(base_url):
+        return "", None  # autre serveur que BITBUCKET_URL : l'API configurée ne le lit pas
+    key = project_key(text)
+    if key:
+        return key, None
+    for pattern in (r"/projects/([^/]+)/repos/([^/?#]+)", r"/scm/([^/]+)/([^/?#]+?)(?:\.git)?$",
+                    r"^(?:ssh://)?git@[^/:]+(?::\d+)?[:/]([^/]+)/([^/]+?)(?:\.git)?$"):
+        match = re.search(pattern, text)
+        if match:
+            return match.group(1).upper(), [match.group(2)]
+    return "", None
+
+
+def _origin(path: str) -> str:
+    """Adresse du remote origin d'un clone (lecture de sa configuration : ni clone, ni fetch)."""
+    return _git(["config", "--get", "remote.origin.url"], cwd=path).stdout.strip()
+
+
+def client_source(repo_input: str, base_url: str = "") -> tuple:
+    """
+    Projet et dépôts Bitbucket du dépôt client, sans clone ni fetch : (PROJET, [dépôts] ou None = projet entier).
+    URL de projet, URL de dépôt (navigation, scm ou ssh), ou chemin local : remote origin du clone, sinon de ses
+    sous-dossiers clonés. ('', None) si un dépôt n'a pas d'adresse Bitbucket de `base_url` ou si plusieurs projets.
+    """
+    text = (repo_input or "").strip()
+    if not text or text == "STD_ONLY":
+        return "", None
+    if not os.path.isdir(text):
+        return _from_url(text, base_url)
+    if os.path.isdir(os.path.join(text, ".git")):
+        clones = [text]
+    else:
+        clones = sorted(os.path.join(text, d) for d in os.listdir(text) if os.path.isdir(os.path.join(text, d, ".git")))
+    found = [_from_url(_origin(c), base_url) for c in clones]
+    projects = {key for key, _ in found}
+    if not found or "" in projects or len(projects) != 1 or any(repos is None for _, repos in found):
+        return "", None
+    return projects.pop(), sorted({repo for _, repos in found for repo in repos})
 
 
 def standard(project: str = "") -> RemoteStandard:
@@ -49,12 +120,15 @@ def work_root(std: RemoteStandard) -> str:
     return os.path.join(ROOT, ".tmp", f"std_{std.project}_travail")
 
 
-def _base(std: RemoteStandard, repo: str) -> tuple:
+def _base(std: RemoteStandard, repo: str, args=None) -> tuple:
     if repo not in std.repos():
         raise BitbucketUnavailable(f"dépôt {repo} absent du projet {std.project}")
-    commit = std.ref(repo, base_candidates())
+    if _allowed(args) and repo not in _allowed(args):
+        raise BitbucketUnavailable(f"dépôt {repo} hors du périmètre lu ({', '.join(_allowed(args))})")
+    candidates = base_candidates(getattr(args, "branches", ""))
+    commit = std.ref(repo, candidates)
     if not commit:
-        raise BitbucketUnavailable(f"{repo} : aucune branche de base ({', '.join(base_candidates())})")
+        raise BitbucketUnavailable(f"{repo} : aucune branche de base ({', '.join(candidates)})")
     return commit, std.ref_name(repo, commit)
 
 
@@ -64,15 +138,17 @@ def _paths(std, repo, commit, prefix="", like="", ext="") -> list:
 
 
 def cmd_repos(std, args) -> list:
-    return [r for r in std.repos() if not args.like or args.like.lower() in r.lower()]
+    return [r for r in std.repos() if (not args.like or args.like.lower() in r.lower())
+            and (not _allowed(args) or r in _allowed(args))]
 
 
 def cmd_search(std, args) -> list:
-    return [f"{repo}/{path}" for repo, path in std.search(args.query)[:args.limit]] or ["(aucun résultat)"]
+    hits = [(repo, path) for repo, path in std.search(args.query) if not _allowed(args) or repo in _allowed(args)]
+    return [f"{repo}/{path}" for repo, path in hits[:args.limit]] or ["(aucun résultat)"]
 
 
 def cmd_files(std, args) -> list:
-    commit, name = _base(std, args.repo)
+    commit, name = _base(std, args.repo, args)
     paths = _paths(std, args.repo, commit, args.prefix, args.like)
     head = [f"# {args.repo} @ {name} ({commit[:10]}) : {len(paths)} fichier(s)"]
     return head + paths[:args.max] + ([f"… ({len(paths) - args.max} de plus : affine --prefix / --like)"]
@@ -80,7 +156,7 @@ def cmd_files(std, args) -> list:
 
 
 def cmd_show(std, args) -> list:
-    commit, name = _base(std, args.repo)
+    commit, name = _base(std, args.repo, args)
     text = std.show(args.repo, commit, args.path)
     if not text:
         return [f"(fichier absent : {args.repo}/{args.path} @ {name})"]
@@ -91,7 +167,7 @@ def cmd_show(std, args) -> list:
 
 
 def cmd_grep(std, args) -> list:
-    commit, name = _base(std, args.repo)
+    commit, name = _base(std, args.repo, args)
     pattern = re.compile(args.regex)
     paths = _paths(std, args.repo, commit, args.prefix, ext=args.ext)
     out, scanned = [], paths[:args.max_files]
@@ -114,7 +190,7 @@ def _git(args: list, cwd: str = None, token: str = "") -> subprocess.CompletedPr
 
 
 def cmd_checkout(std, args) -> list:
-    commit, name = _base(std, args.repo)
+    commit, name = _base(std, args.repo, args)
     target = os.path.join(work_root(std), args.repo)
     url = f"{std.base}/scm/{std.project.lower()}/{args.repo}.git"
     if not os.path.isdir(os.path.join(target, ".git")):
@@ -139,7 +215,9 @@ def cmd_checkout(std, args) -> list:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--project", default="")
-    sub = parser.add_subparsers(dest="command", required=True)
+    parser.add_argument("--branches", default="")
+    parser.add_argument("--repos", default="")
+    sub =parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("repos")
     p.add_argument("--like", default="")
     p = sub.add_parser("search")
