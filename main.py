@@ -990,8 +990,9 @@ def detect_odatio_version(std_repo_path: str) -> str:
     if forced:
         print(f"[VERSION ODATIO] {forced} (ODATIO_VERSION du .env)")
         return forced
-    pom_path = os.path.join(std_repo_path, "pom.xml")
-    if os.path.exists(pom_path):
+    # Sans copie locale (Standard lu dans Bitbucket) : aucun pom lu, surtout pas celui du dossier courant
+    pom_path = os.path.join(std_repo_path, "pom.xml") if std_repo_path else ""
+    if pom_path and os.path.exists(pom_path):
         version, origin = odatio_version_from_pom(_read_text(pom_path))
         if version:
             print(f"[VERSION ODATIO] {version} ({origin} du pom du Standard)")
@@ -1446,6 +1447,65 @@ def ensure_local_repo(repo_input: str, repo_label: str, only: list = None) -> st
         return target_dir
 
 
+def cadrage_remote_plan(std_key: str, client_repo_arg: str, http=None) -> dict:
+    """
+    Cadrage d'un ticket client (ni socle seul, ni Cucumber) : Standard et dépôt client lus dans Bitbucket par l'API
+    REST (tools/bitbucket_code.py), sans clone ni fetch. {"remote": bool, "motif": raison du mode local,
+    "std": RemoteStandard, "client_project", "client_repos": [dépôts] ou None (projet entier)}. Configuration
+    incomplète, dépôt client sans adresse Bitbucket ou API en erreur : mode local (copies d'ensure_local_repo).
+    """
+    from tools import bitbucket_code
+    base = os.getenv("BITBUCKET_URL", "").strip().rstrip("/")
+    local = lambda motif: {"remote": False, "motif": motif}  # noqa: E731
+    if not base:
+        return local("BITBUCKET_URL non renseignée")
+    if not os.getenv("BITBUCKET_HTTP_TOKEN", "").strip():
+        return local("BITBUCKET_HTTP_TOKEN non renseigné")
+    if not std_key:
+        return local("BITBUCKET_STD_REPO_PATH n'est pas l'adresse d'un projet Bitbucket (…/projects/CLE)")
+    client_project, client_repos = bitbucket_code.client_source(client_repo_arg, base)
+    if not client_project:
+        return local(f"dépôt client « {client_repo_arg or 'non renseigné'} » sans adresse Bitbucket de {base} "
+                     f"(URL de projet ou de dépôt, ou remote origin d'un seul projet)")
+    std = bitbucket_std.RemoteStandard(std_key, http=http)
+    client = bitbucket_std.RemoteStandard(client_project, http=http)
+    try:
+        if not std.repos():
+            return local(f"projet du Standard {std_key} vide ou absent dans Bitbucket")
+        found = client.repos()
+    except bitbucket_std.BitbucketUnavailable as exc:
+        return local(f"API Bitbucket indisponible ({exc})")
+    missing = [r for r in (client_repos or []) if r not in found]
+    if not found or missing:
+        return local(f"dépôt(s) client absent(s) du projet {client_project} dans Bitbucket "
+                     f"({', '.join(missing) or 'aucun dépôt'})")
+    return {"remote": True, "motif": "", "std": std, "client_project": client_project, "client_repos": client_repos}
+
+
+def cadrage_remote_scope(plan: dict, odatio_version: str, python_exe: str, workspace_dir: str) -> str:
+    """Consigne d'accès au code du cadrage lu dans Bitbucket (bloc bitbucket_code_cadrage) et lignes de journal."""
+    from tools.standard_version import normalize, std_refs
+    cli = f'"{python_exe}" "{os.path.join(workspace_dir, "tools", "bitbucket_code.py")}"'
+    std_project = plan["std"].project
+    # Version du Standard : ODATIO_VERSION (références de version) sinon branche par défaut, comme la copie locale
+    std_candidates = list(std_refs(odatio_version, ("HEAD",)))
+    version = normalize(odatio_version)[0]
+    std_ref_label = (f"version {version} : {', '.join(std_candidates[:-1])}, à défaut branche par défaut"
+                     if version else "branche par défaut de chaque dépôt")
+    repos = plan["client_repos"]
+    client_repos = f"dépôt(s) {', '.join(repos)}" if repos else "tous les dépôts du projet"
+    client_cli = f"{cli} --project {plan['client_project']} --branches origin/integration"
+    print(f"[CODE CADRAGE] Standard : Bitbucket REST, projet {std_project}, {std_ref_label}.")
+    print(f"[CODE CADRAGE] Client : Bitbucket REST, projet {plan['client_project']}, {client_repos}, branche "
+          f"integration.")
+    print("[CODE CADRAGE] Aucune copie locale (ni clone, ni fetch) pour le cadrage ; le patch copiera le dépôt à "
+          "modifier, comme avant.")
+    return render_prompt("bitbucket_code_cadrage", std_project=std_project, std_ref_label=std_ref_label,
+                         std_cli=f"{cli} --project {std_project} --branches {','.join(std_candidates)}",
+                         client_project=plan["client_project"], client_repos=client_repos,
+                         client_cli=client_cli + (f" --repos {','.join(repos)}" if repos else ""))
+
+
 POSTMERGE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".tmp", "postmerge")
 POSTMERGE_SUMMARY = "[CUCUMBER] Adaptation des tests post-merge pour {source}"
 
@@ -1668,6 +1728,15 @@ def main():
         std_only_ticket = target_project.upper() in std_only_projects() or args.client_repo == "STD_ONLY"
         remote_code = bool(std_only_ticket and not is_cucumber_client and std_key
                            and os.getenv("BITBUCKET_URL", "").strip())
+        # Cadrage d'un ticket client : Standard et dépôt client lus dans Bitbucket (API REST), aucun clone ni fetch ;
+        # Bitbucket non configuré ou illisible : copies locales comme avant, mode annoncé dans le journal
+        client_repo_arg = args.client_repo or os.getenv("BITBUCKET_CLIENT_REPO_PATH", "")
+        cadrage_remote = {}
+        if args.step == "cadrage" and not is_cucumber_client and not std_only_ticket:
+            cadrage_remote = cadrage_remote_plan(std_key, client_repo_arg)
+            if not cadrage_remote["remote"]:
+                print(f"[CODE CADRAGE] Mode local : {cadrage_remote['motif']} ; Standard et client lus dans des "
+                      f"copies locales (ensure_local_repo).")
         if remote_code:
             STD_READER[0] = bitbucket_std.RemoteStandard(std_key)
             local_std_repo = os.path.join(workspace_dir, ".tmp", f"std_{std_key}_travail")
@@ -1678,6 +1747,9 @@ def main():
             STD_READER[0] = bitbucket_std.RemoteStandard(std_key)
             local_std_repo = os.path.join(workspace_dir, ".tmp", f"std_{std_key}")
             print(f"[STANDARD] Code du Standard lu dans Bitbucket (projet {std_key}, API REST) : aucun fetch préalable.")
+        elif cadrage_remote.get("remote"):
+            STD_READER[0] = cadrage_remote["std"]
+            local_std_repo = ""
         else:
             local_std_repo = ensure_local_repo(std_repo_arg, "std")
             STD_READER[0] = local_std_repo
@@ -1711,10 +1783,17 @@ def main():
                                f"travail : '{target_issue}_dev_...'.")
                 repo_scope = render_prompt("std_bitbucket_code", cli=code_cli, work_root=local_std_repo)
         else:
-            client_repo_arg = args.client_repo or os.getenv("BITBUCKET_CLIENT_REPO_PATH", "")
-            local_client_repo = ensure_local_repo(client_repo_arg, "client")
             branch_rule = f"Projet '{target_project}' : la branche de base sur le dépôt client est 'integration'. Branche de travail : '{target_issue}_dev_...'."
-            repo_scope = f"Explore le code source dans le socle '{local_std_repo}' et dans le dépôt client '{local_client_repo}'."
+            if cadrage_remote.get("remote"):
+                local_client_repo = ""
+                repo_scope = cadrage_remote_scope(cadrage_remote, odatio_version, python_exe, workspace_dir)
+            else:
+                local_client_repo = ensure_local_repo(client_repo_arg, "client")
+                repo_scope = f"Explore le code source dans le socle '{local_std_repo}' et dans le dépôt client '{local_client_repo}'."
+                if cadrage_remote:
+                    print(f"[CODE CADRAGE] Standard : local, {local_std_repo}, branche de chaque copie locale.")
+                    print(f"[CODE CADRAGE] Client : local, {local_client_repo}, branche de chaque copie locale "
+                          f"(base attendue : integration).")
 
         # 4. Version du Standard propre au client Cucumber (profil client), puis Standard et Cucumber Standard placés
         # sur la référence de cette version
