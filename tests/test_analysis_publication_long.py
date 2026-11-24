@@ -6,8 +6,9 @@ from datetime import datetime
 import pytest
 
 from tools import analysis_publication as ap
-from tools import integration_tools
+from agent_socle import besoin as integration_tools
 from agent_socle import jira_tools
+from agent_socle import publication
 
 
 class FakeJira:
@@ -62,6 +63,7 @@ def analysis(sections: int, size: int = 400) -> str:
 def workspace(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(ap, "PUBLICATION_DIR", str(tmp_path / "publication"))
+    monkeypatch.setattr(publication, "PUBLICATION_DIR", str(tmp_path / "publication"))
     monkeypatch.setenv("JIRA_DESCRIPTION_LIMIT", "6000")
     monkeypatch.setenv("JIRA_LIMIT_MARGIN", "300")
     return tmp_path

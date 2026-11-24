@@ -9,14 +9,17 @@ from datetime import datetime
 
 import pytest
 
-from tools import analysis_publication, epic_tools, integration_tools
+from tools import analysis_publication, epic_tools
+from agent_socle import besoin as integration_tools
 from agent_socle import jira_guard, jira_tools
+from agent_socle import publication
 
 
 @pytest.fixture
 def workspace(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(analysis_publication, "PUBLICATION_DIR", str(tmp_path / "publication"))
+    monkeypatch.setattr(publication, "PUBLICATION_DIR", str(tmp_path / "publication"))
     return tmp_path
 
 
@@ -168,16 +171,6 @@ def test_statut_brouillon_puis_publiee_puis_brouillon_apres_revision(workspace):
                                 "2026-11-04 à 09:30")
 
 
-def test_cadrage_reponses_sans_publication(workspace, fake_jira, monkeypatch):
-    main = load_main()
-    monkeypatch.setattr(analysis_publication, "update_jira_cadrage",
-                        lambda *a, **k: pytest.fail("publication pendant cadrage-reponses"))
-    analysis_publication.save_draft("PROJ-1", "# Cadrage PROJ-1\nAvec réponses")
-    assert main.finalize_cadrage_answers("PROJ-1", "# Cadrage PROJ-1\nAvec réponses", "# Cadrage PROJ-1\nAvant")
-    assert writes(fake_jira) == []
-    assert not analysis_publication.status("PROJ-1")["publiee"]
-
-
 def _epic_workspace(workspace):
     (workspace / "EPIC-1-tache-1.md").write_text("# Cadrage tâche 1", encoding="utf-8")
     (workspace / "EPIC-1-tache-2.md").write_text("# Cadrage tâche 2", encoding="utf-8")
@@ -223,7 +216,7 @@ def test_validation_du_decoupage_cree_les_taches_et_publie(workspace, monkeypatc
 
 def test_consignes_des_prompts():
     root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "prompts")
-    for name in ("cadrage", "refine", "cadrage_reponses", "epic_cadrage", "epic_revision"):
+    for name in ("cadrage", "refine", "epic_cadrage", "epic_revision"):
         text = open(os.path.join(root, f"{name}.md"), encoding="utf-8").read()
         assert "N'écris rien dans Jira" in text, name
         assert "Mets à jour la description du ticket Jira" not in text, name

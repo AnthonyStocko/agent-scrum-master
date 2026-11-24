@@ -10,11 +10,13 @@ import pytest
 
 from tools import analysis_publication, lecture_manager as lecture
 from agent_socle import livraisons
+from agent_socle import publication
 
 
 @pytest.fixture
 def racine(tmp_path, monkeypatch):
     monkeypatch.setattr(analysis_publication, "PUBLICATION_DIR", str(tmp_path / "publication"))
+    monkeypatch.setattr(publication, "PUBLICATION_DIR", str(tmp_path / "publication"))
     (tmp_path / "ODA-1-cadrage.md").write_text("# Besoin\ntexte\n# Solution\nfaite\n", encoding="utf-8")
     (tmp_path / "ODA-2-cadrage.md").write_text("# Besoin\npubliée\n", encoding="utf-8")
     analysis_publication.record_publication("ODA-2", "# Besoin\npubliée\n")
