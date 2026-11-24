@@ -388,3 +388,62 @@ def test_agent_runs_no_test_without_jenkins_credentials(monkeypatch):
     monkeypatch.setenv("CUCUMBER_VERIFY_LOCAL_CMD", "mvn test")
     mode, message = cv.execution_mode({"verify_branch": "agent"}, "integration")
     assert mode == "" and "ne lance aucun test" in message and "importez son résultat" in message
+
+
+# Mutation : Then servant de critère de recherche (cas Canson lot 6, build 486)
+PTS_FEATURE = """Feature: Stock PTS
+  @agent_canson_6 @agent_canson_6_2
+  Scenario: 3 UL PK3 donnent 9 unités
+    Given un produit "P3"
+    When TLS- Intégration d'un compte rendu WCS
+    Then MESS- Existence d'un "1"ème message pour la reference "SPEC-PTSQ3"
+      | genericMessage            | resultCode |
+      | WCS_STOCK_QUANTITY_REPORT | OK         |
+    And CONTENT- <X> visualisation du stock répondant aux caractéristiques
+      | X | refStockOwner.code | refProduct.code | quantity |
+      | 1 | CF01               | P3-SPEC-PTSQ    | 9        |
+"""
+
+
+def test_mutation_keeps_then_steps_that_failed_technically():
+    tag = "@agent_canson_6_2"
+    mutated, _ = cv.mutate_feature(PTS_FEATURE, {tag})
+    assert '"SPEC-PTSQ3_MUT"' in mutated and "OK_MUT" in mutated            # 1er passage : comme avant
+    step = cv._step_text("Then MESS- Existence d'un \"1\"ème message pour la reference \"SPEC-PTSQ3_MUT\"")
+    mutated, counts = cv.mutate_feature(PTS_FEATURE, {tag}, {tag: {step}})
+    assert '"SPEC-PTSQ3"' in mutated and "_MUT" not in mutated.split("And CONTENT")[0]   # step et table intacts
+    assert "| 2 |" in mutated and "| 10" in mutated and counts[tag] == 1      # le Then suivant est muté
+
+
+def test_mutation_retried_without_criteria_then(monkeypatch, tmp_path):
+    rel = "src/test/resources/cucumber/features/canson/pts.feature"
+    write(str(tmp_path / rel), PTS_FEATURE)
+    monkeypatch.delenv("CUCUMBER_VERIFY_ENV_STD", raising=False)
+    monkeypatch.delenv("CUCUMBER_VERIFY_MUTATION_RETRIES", raising=False)
+    monkeypatch.setenv("CUCUMBER_CLEANUP_PROOF", "0")
+    labels = []
+
+    def run_tags(mode, worktree, base, build_fn, tags, env, overrides, label, sources=None, **_):
+        labels.append(label)
+        text = next(iter(overrides.values()), "")
+        if not overrides:
+            result = {"statut": "passe", "step": "", "phase": "", "message": ""}
+        elif "OK_MUT" in text:                         # 1re mutation : 500 sur l'énumération, pas une assertion
+            result = {"statut": "echoue", "phase": "then", "nature": "technique", "exception": "RuntimeException",
+                      "step": "Then MESS- Existence d'un \"1\"ème message pour la reference \"SPEC-PTSQ3_MUT\"",
+                      "message": "500 - No enum constant ResultCode.OK_MUT"}
+        else:                                          # reprise : le Then CONTENT échoue sur son assertion
+            result = {"statut": "echoue", "phase": "then", "nature": "assertion", "exception": "AssertionError",
+                      "step": "And CONTENT- <X> visualisation", "message": "expected 2 but was 1"}
+        return {"ok": True, "message": "ok", "build": str(len(labels)), "resultats": {(rel, "3 UL PK3 donnent 9 unités"): result}}
+    monkeypatch.setattr(cv, "run_tags", run_tags)
+    scenarios, kinds = {"@agent_canson_6_2": f"{rel}::3 UL PK3 donnent 9 unités"}, {"@agent_canson_6_2": "extension"}
+    result = cv.verify_lot("jenkins", str(tmp_path), "HEAD", None, [rel], scenarios, kinds, "lot6")
+    assert labels == ["lot6-client", "lot6-mutation", "lot6-mutation-2"]
+    assert result["scenarios"]["@agent_canson_6_2"]["statut"] == "pertinent"
+    # Sans reprise : comportement d'avant, non vérifié
+    labels.clear()
+    monkeypatch.setenv("CUCUMBER_VERIFY_MUTATION_RETRIES", "0")
+    result = cv.verify_lot("jenkins", str(tmp_path), "HEAD", None, [rel], scenarios, kinds, "lot6")
+    assert labels == ["lot6-client", "lot6-mutation"]
+    assert result["scenarios"]["@agent_canson_6_2"]["statut"] == "non_verifie"
