@@ -28,13 +28,10 @@ def test_signature_projet_et_ticket():
 
 def test_app_applique_le_lien_une_fois(monkeypatch, tmp_path):
     testing = pytest.importorskip("streamlit.testing.v1")
-    from tools import cucumber_detection, standard_version_task
     from agent_socle import jira_tools
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".env").write_text("", encoding="utf-8")
     monkeypatch.delenv("AGENT_AUTH", raising=False)
-    monkeypatch.setattr(cucumber_detection, "start", lambda *a, **k: False)
-    monkeypatch.setattr(standard_version_task, "start", lambda *a, **k: False)
     monkeypatch.setattr(jira_tools, "get_jira_issue_summary", lambda key: "Titre du ticket")
     at = testing.AppTest.from_file(os.path.join(ROOT, "app.py"), default_timeout=120)
     at.query_params.update({"source": "manager", "ticket": "ODA-12", "contexte": "Cadrer le ticket."})
@@ -55,12 +52,10 @@ def test_app_applique_le_lien_une_fois(monkeypatch, tmp_path):
 
 def test_app_question_preparee_jamais_envoyee_seule(monkeypatch, tmp_path):
     testing = pytest.importorskip("streamlit.testing.v1")
-    from tools import assistant, cucumber_detection, standard_version_task
+    from tools import assistant
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".env").write_text("", encoding="utf-8")
     monkeypatch.delenv("AGENT_AUTH", raising=False)
-    monkeypatch.setattr(cucumber_detection, "start", lambda *a, **k: False)
-    monkeypatch.setattr(standard_version_task, "start", lambda *a, **k: False)
     saved = []
     monkeypatch.setattr(assistant, "load_history", lambda: [])
     monkeypatch.setattr(assistant, "save_history", lambda messages: saved.append(messages))

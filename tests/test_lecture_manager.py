@@ -66,7 +66,7 @@ def test_builds_des_jobs_configures(monkeypatch):
 
 def test_cucumber(monkeypatch):
     monkeypatch.setattr(lecture.assistant, "known_clients", lambda: ["_standard", "client-a", "client-b"])
-    monkeypatch.setattr(lecture.cucumber_lock, "holder", lambda c: {"pid": 42, "debut": "2026-11-19T09:00:00"}
+    monkeypatch.setattr(lecture.verrou, "holder", lambda c: {"pid": 42, "debut": "2026-11-19T09:00:00"}
                         if c == "client-a" else {})
     texte = lecture.cucumber()
     assert "client-a : génération en cours (processus 42" in texte
