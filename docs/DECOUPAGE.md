@@ -12,12 +12,12 @@ page `if PAGE == …` et chaque étape `--step`, y compris par les drapeaux `is_
 | Agent | Dépôt (privé, `C:\…`) | Paquet Python | IHM / API | CLI |
 |---|---|---|---|---|
 | Socle | `agent-socle` | `agent_socle` (installé `pip install -e ..\agent-socle`, puis tag `v0.1.0`) | — | — |
-| Projets et connexions | `agent-projets` | `tools/` | 8502 / 8512 | `main.py --step projets-*` (à créer) |
-| Intégration | `agent-integration` | `tools/` | 8503 | `main.py --step besoin\|cadrage-reponses` |
-| Lancement | `agent-lancement` | `tools/` | 8504 | `cadrage\|refine\|epic-cadrage\|epic-sync\|patch` |
-| Cucumber | `agent-cucumber` | `tools/` | 8505 | `generate-cucumber-client\|generate-cucumber-postmerge\|restore-config` |
-| Revue de PR | `agent-revue-pr` | `tools/` | 8506 | `review-pr` |
-| Manager | `agent-manager-savoye` (existant) | — | 8501 | `ask` |
+| Projets et connexions | `agent-projets` | racine | 8504 / 8512 | `main.py --step api\|projets` |
+| Intégration | `agent-integration` | `tools/` | 8505 | `main.py --step besoin\|cadrage-reponses` |
+| Lancement | `agent-lancement` | `tools/` | 8506 | `cadrage\|refine\|epic-cadrage\|epic-sync\|patch` |
+| Cucumber | `agent-cucumber` | `tools/` | 8507 | `generate-cucumber-client\|generate-cucumber-postmerge\|restore-config` |
+| Revue de PR | `agent-revue-pr` | `tools/` | 8508 | `review-pr` |
+| Manager | `agent-manager-savoye` (existant) | — | 8500 (superviseur 8499) | `ask` |
 
 Aucun autre dépôt. Les modules gardent leur nom (seul le chemin d'import change : `tools.X` → `agent_socle.X`).
 
@@ -26,7 +26,7 @@ Aucun autre dépôt. Les modules gardent leur nom (seul le chemin d'import chang
 | Destination | Modules |
 |---|---|
 | Socle | `token_measure`, `token_report`, `ui_timer`, `jira_cli`, `jira_guard`, `jira_tools` (voir §4), `jenkins_tools`, `bitbucket_std`, `bitbucket_code`, `db_tools`, `secret_tools`, `env_tools`, `auth_tools`, `auth_setup`, `lien_manager`, `mcp_servers`, `groundcover_tools`, `odatio_docs`, `skills`, `knowledge_tools`, `memory_tools`, `livraisons` ; extraits `git_tools` (`cucumber_tools`) et `horodatage` (`cucumber_verify`) ; `chemins` (`AGENT_DATA_DIR`) |
-| Projets | `config_commune` ; extraits : registre des projets de `cucumber_detection` (`known_projects`, `save_project`) et lecture de la version choisie de `client_version` (§4) |
+| Projets | tests de connexion de la page Configuration ; registre en lecture servi par 8512 (code dans `agent_socle.projets`) ; `config_commune` → socle (v0.2.0) |
 | Intégration | `integration_tools` |
 | Lancement | `analysis_publication` (lecture du statut extraite au socle, §4), `estimation`, `epic_tools` |
 | Cucumber | les 69 `cucumber_*` (dont `cucumber_lock` et `cucumber_cost`, cf. §7), `client_version`, `standard_version`, `standard_version_task`, `cucumber_detection`, `db_restore`, `xlsm_tool`, `tools/data/cucumber_nettoyage/` |
@@ -123,6 +123,11 @@ lecture par chemin via `AGENT_DATA_DIR`/dépôt d'origine à traiter dans la pha
 
 | Sujet | Décision |
 |---|---|
+| Ports (phase 2, choix de l'utilisateur) | 8499-8503 déjà pris (superviseur, manager, scrum-master, odatio, dev-tool) : nouveaux agents sur 8504-8508, API 8512 ; IHM en 127.0.0.1 |
+| Registre des projets (phase 2, choix de l'utilisateur) | façade en lecture sans migration : projets Cucumber (`.tmp/cucumber`) + applications de `commun.toml` du manager, sans fusion (`agent_socle.projets`, client 8512 avec repli local) ; le manager reste l'éditeur de `commun.toml` |
+| Secrets (phase 2, choix de l'utilisateur) | aucun ne bouge : `.env` de `AGENT_DATA_DIR` et injection par le manager (`SAVOYE_VARIABLES`) ; jetons Bitbucket par usage reportés |
+| Page Configuration (phase 2) | tests de connexion → agent-projets ; le formulaire global `.env` reste dans scrum-master (réglages de tous les agents, valeurs par défaut de `cucumber_tools`) et se répartit avec chaque agent (phases 3-7) ; réglages d'estimation, compte Claude et mémoire restent jusqu'aux phases 5 et 7 |
+| OIDC des nouvelles IHM | `[secrets] files` pointe le `secrets.toml` d'agent-scrum-master (lu sur place, pas de copie) |
 | API d'agent-projets (8512) | `http.server` de la bibliothèque standard (lecture JSON) : `fastapi` absent du venv, aucune dépendance ajoutée |
 | `AGENT_DATA_DIR` | nouvelle variable ; défaut `..\agent-scrum-master` ; aucune migration de `.tmp/` |
 | Délégation CLI | `agent-scrum-master/main.py --step X` relance `<dépôt de l'agent>\main.py` avec les mêmes arguments (`AGENT_<NOM>_DIR`, défaut `C:\agent-<nom>`) |
@@ -140,4 +145,7 @@ lecture par chemin via `AGENT_DATA_DIR`/dépôt d'origine à traiter dans la pha
 |---|---|---|---|
 | 0 | agent-scrum-master | #52 | cartographie ; 6 dépôts privés créés et clonés sous `C:\` ; pytest 1 053 passés |
 | 1 | agent-socle | #1 | socle v0.1.0 (tag) : 22 modules + `git_tools`, `horodatage`, `chemins` ; 140 tests passés |
+| 2 | agent-socle | #2 | v0.2.0 (tag) : `projets` (façade + client 8512), `fichiers`, `config_commune` ; 148 tests |
+| 2 | agent-projets | #1 | API 8512, IHM 8504 (registre + tests de connexion), CLI ; 7 tests |
+| 2 | agent-scrum-master | #54 | socle v0.2.0, tests de connexion déplacés (lien vers 8504) ; pytest 912 passés + 141 au socle = 1 053 (référence), 0 échec |
 | 1 | agent-scrum-master | #53 | utilise `agent_socle` ; 11 fichiers de tests partis au socle ; pytest 914 passés + 139 au socle = 1 053 (référence), 0 échec |

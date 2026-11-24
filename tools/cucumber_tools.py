@@ -138,12 +138,7 @@ def state_path(client_name: str) -> str:
     return os.path.join(cache_dir(client_name), "etat.json")
 
 
-def _read_json(path: str, default=None):
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (OSError, ValueError):
-        return default
+from agent_socle.fichiers import _read_json  # noqa: E402,F401 — extrait au socle
 
 
 def _write_json(path: str, data) -> None:
