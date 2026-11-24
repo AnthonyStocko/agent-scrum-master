@@ -43,13 +43,13 @@ def test_only_the_chosen_page_is_executed(monkeypatch, tmp_path):
 
 
 def test_search_criteria_kept_when_changing_page(monkeypatch, tmp_path):
-    at, _ = _app(monkeypatch, tmp_path, "lancement")
-    at.text_input(key="search_project").input("ABC").run()
+    at, _ = _app(monkeypatch, tmp_path, "cucumber-avance")
+    at.text_input(key="cucumber_repo").input("ABC").run()
     at.session_state["nav_page"] = "configuration"
     at.run()
-    at.session_state["nav_page"] = "lancement"
+    at.session_state["nav_page"] = "cucumber-avance"
     at.run()
-    assert at.text_input(key="search_project").value == "ABC"
+    assert at.text_input(key="cucumber_repo").value == "ABC"
 
 
 def test_set_timer_outside_a_fragment_does_nothing():

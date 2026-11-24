@@ -13,10 +13,24 @@ import ast
 INCONNU = None
 
 
+def vide(n, connus):
+    """Expression connue pour valoir {} ou None (dictionnaire vide constant, `.get` dessus, `a or {}` de tels)."""
+    if isinstance(n, ast.Dict) and not n.keys:
+        return True
+    if isinstance(n, ast.Name):
+        return connus.get(n.id, 0) == {}
+    if isinstance(n, ast.BoolOp) and isinstance(n.op, ast.Or):
+        return all(vide(v, connus) for v in n.values)
+    return (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "get"
+            and vide(n.func.value, connus))
+
+
 def valeur(n, etapes, connus):
     """Valeur booléenne connue de l'expression, sinon None."""
+    if vide(n, connus):
+        return False
     if isinstance(n, ast.Name) and n.id in connus:
-        return connus[n.id]
+        return bool(connus[n.id])
     if isinstance(n, ast.UnaryOp) and isinstance(n.op, ast.Not):
         v = valeur(n.operand, etapes, connus)
         return None if v is None else not v
@@ -126,16 +140,55 @@ def _expression(src, etapes, connus):
     return src[:debut] + texte + src[fin:]
 
 
+def deduits(src, etapes, connus):
+    """Drapeaux affectés une seule fois dans main() (`x = C` ou `x = bool(C)`) dont C est connu : ajoutés à connus."""
+    connus = dict(connus)
+    fn = next(n for n in ast.parse(src).body if isinstance(n, ast.FunctionDef) and n.name == "main")
+    while True:
+        affectations = {}
+        for n in ast.walk(fn):
+            if isinstance(n, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
+                cibles = n.targets if isinstance(n, ast.Assign) else [n.target]
+                for c in cibles:
+                    for x in ast.walk(c):
+                        if isinstance(x, ast.Name):
+                            affectations.setdefault(x.id, []).append(n)
+        ajout = False
+        for nom, liste in affectations.items():
+            if nom in connus or len(liste) != 1 or not isinstance(liste[0], ast.Assign) or len(liste[0].targets) != 1:
+                continue
+            v = liste[0].value
+            if isinstance(v, ast.Dict) and not v.keys and not any(
+                    isinstance(x, ast.Attribute) and isinstance(x.value, ast.Name) and x.value.id == nom
+                    and x.attr != "get" for x in ast.walk(fn)):
+                connus[nom], ajout = {}, True
+                continue
+            if isinstance(v, ast.Call) and getattr(v.func, "id", "") == "bool" and len(v.args) == 1:
+                v = v.args[0]
+            r = valeur(v, etapes, connus)
+            if r is not None:
+                connus[nom], ajout = r, True
+        if not ajout:
+            return connus
+
+
 def elaguer(src, etapes, connus):
+    initiaux = connus
     while True:
-        suivant = _expression(src, etapes, connus)
-        if suivant is None:
-            break
-        ast.parse(suivant)
-        src = suivant
-    while True:
-        suivant = _etape(src, etapes, connus)
-        if suivant is None:
+        avant = src
+        connus = deduits(src, etapes, initiaux)
+        while True:
+            suivant = _expression(src, etapes, connus)
+            if suivant is None:
+                break
+            ast.parse(suivant)
+            src = suivant
+        connus = deduits(src, etapes, initiaux)
+        while True:
+            suivant = _etape(src, etapes, connus)
+            if suivant is None:
+                break
+            ast.parse(suivant)
+            src = suivant
+        if src == avant:
             return src
-        ast.parse(suivant)
-        src = suivant
