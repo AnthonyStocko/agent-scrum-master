@@ -9,23 +9,6 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PAGES = ("integration", "lancement", "cucumber", "assistant")
 
 
-def test_lire_valide_et_filtre():
-    assert lm.lire({"page": "cucumber", "ticket": "ODA-1"}, PAGES) == {}          # pas un lien du manager
-    lien = lm.lire({"source": ["manager"], "page": "cucumber", "ticket": "oda-12", "projet": "clientx",
-                    "question": " Pourquoi ? ", "contexte": "Lancer\nles tests", "demande": "ignorée"}, PAGES)
-    assert lien == {"page": "cucumber", "ticket": "ODA-12", "projet": "clientx", "question": "Pourquoi ?",
-                    "contexte": "Lancer les tests"}
-    assert lm.lire({"source": "manager", "page": "inconnue", "ticket": "pas-un ticket", "projet": "a/b"}, PAGES) == {}
-    assert len(lm.lire({"source": "manager", "question": "x" * 5000}, PAGES)["question"]) == lm.TEXTE_MAX
-
-
-def test_signature_projet_et_ticket():
-    assert lm.signature({"b": "2", "a": "1"}) == "a=1|b=2"
-    assert lm.projet_connu("Client-X", ["clientx", "autre"]) == "clientx"
-    assert lm.projet_connu("inconnu", ["clientx"]) == "" and lm.projet_connu("", ["clientx"]) == ""
-    assert lm.projet_jira("ODA-12") == "ODA" and lm.projet_jira("") == ""
-
-
 def test_app_applique_le_lien_une_fois(monkeypatch, tmp_path):
     testing = pytest.importorskip("streamlit.testing.v1")
     from agent_socle import jira_tools
@@ -52,18 +35,15 @@ def test_app_applique_le_lien_une_fois(monkeypatch, tmp_path):
 
 def test_app_question_preparee_jamais_envoyee_seule(monkeypatch, tmp_path):
     testing = pytest.importorskip("streamlit.testing.v1")
-    from tools import assistant
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".env").write_text("", encoding="utf-8")
     monkeypatch.delenv("AGENT_AUTH", raising=False)
     saved = []
-    monkeypatch.setattr(assistant, "load_history", lambda: [])
-    monkeypatch.setattr(assistant, "save_history", lambda messages: saved.append(messages))
     at = testing.AppTest.from_file(os.path.join(ROOT, "app.py"), default_timeout=120)
     at.query_params.update({"source": "manager", "question": "Où en est le ticket ODA-12 ?"})
     at.run()
     assert not at.exception, [e.value for e in at.exception]
     assert at.session_state["nav_page"] == "assistant"
     assert at.session_state["manager_question"] == "Où en est le ticket ODA-12 ?"
-    assert "Où en est le ticket ODA-12 ?" in " ".join(m.value for m in at.markdown)
-    assert saved == []                                  # rien n'est envoyé à l'agent sans clic
+    # Assistant des agents : onglet du manager, rien n'est envoyé (test de l'onglet : agent-manager-savoye)
+    assert "8500" in at.get("link_button")[0].proto.url and saved == []

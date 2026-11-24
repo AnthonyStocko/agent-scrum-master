@@ -1,25 +1,13 @@
 import argparse
 import io
-import json
 import logging
 import os
-import subprocess
 import sys
-import time
-import requests
 from dotenv import load_dotenv
 
 from agent_socle import env_tools
-from tools import assistant
 # Fonctions communes des CLI (Claude Code, prompts, tokens, doc ODATiO) et base REST Bitbucket : socle
 from agent_socle import cli
-from agent_socle.cli import (_env_int,
-    claude_effort,
-    render_prompt,
-    lean_session,
-    run_claude,
-    report_token_usage,
-    share_knowledge)
 
 # Force l'encodage UTF-8 sous Windows
 if hasattr(sys.stdout, "buffer"):
@@ -55,45 +43,6 @@ cli.DEFAULT_PROMPTS_DIR = DEFAULT_PROMPTS_DIR  # puis les modèles communs du so
 # ---------------------------------------------------------------------------
 # Connaissances partagées : dépôt des analyses produites (knowledge_tools), jamais bloquant
 # ---------------------------------------------------------------------------
-
-
-def run_assistant(question: str, answer_file: str) -> int:
-    """
-    Onglet « Assistant » : réponse à une question libre sur les fonctionnalités de l'application ou ses résultats,
-    par l'agent en lecture seule (code de l'application, résultats de .tmp/ et livrables). La réponse est écrite
-    dans `answer_file` (Markdown, secrets masqués). Renvoie le code de sortie.
-    """
-    question = (question or "").strip()
-    if not question:
-        print("[ASSISTANT] ❌ Question vide.")
-        return 2
-    code_dir = os.path.dirname(os.path.abspath(__file__))
-    prompt = render_prompt(
-        "assistant", utilisateur=os.getenv("JIRA_EMAIL", "").split("@")[0] or "l'utilisateur", code=code_dir,
-        token_saving_rules="\n" + render_prompt("token_saving_rules"), resultats=assistant.results_index(),
-        historique=assistant.recent_exchanges(assistant.load_history()[:-1]), question=question)
-    model = os.getenv("CLAUDE_MODEL_ASSISTANT", "").strip() or "sonnet"
-    effort = claude_effort("CLAUDE_EFFORT_ASSISTANT")
-    returncode, output, usage, limit_hit = run_claude(prompt, model, [code_dir], REVIEW_TOOLS,
-                                                      extra_args=("--max-turns", str(_env_int("ASSISTANT_MAX_TURNS", 25))),
-                                                      cwd=code_dir, effort=effort, lean=lean_session())
-    report_token_usage("ASSISTANT", "ask", model, usage, len(prompt), returncode, effort)
-    answer = assistant.clean_answer(output)
-    if limit_hit or not answer:
-        print("[ASSISTANT] ❌ Pas de réponse" + (" (quota atteint)." if limit_hit else "."))
-        return 1
-    if answer_file:
-        os.makedirs(os.path.dirname(os.path.abspath(answer_file)), exist_ok=True)
-        with open(answer_file, "w", encoding="utf-8") as f:
-            f.write(answer)
-    # Analyse déposée dans le répertoire de connaissances partagé (projet du client cité, sinon projet par défaut)
-    project, client = assistant.subject_project(question, answer)
-    share_knowledge(assistant.analysis_markdown(question, answer), project, "analyse-assistant",
-                    " ".join(question.split())[:90], client=client, tags=["assistant"] + ([client] if client else []))
-    return 0
-
-
-REVIEW_TOOLS = ["Read", "Grep", "Glob"]
 
 
 def main():
@@ -183,7 +132,8 @@ def main():
         sys.exit(cli.deleguer("integration", sys.argv[1:]))
     if args.step in ("generate-cucumber-client", "generate-cucumber-postmerge", "restore-config"):
         sys.exit(cli.deleguer("cucumber", sys.argv[1:]))
-    sys.exit(run_assistant(args.question, args.answer_file))
+    # Assistant des agents : agent-manager-savoye (AGENT_MANAGER_SAVOYE_DIR), mêmes arguments
+    sys.exit(cli.deleguer("manager-savoye", sys.argv[1:]))
 
 
 # Points restants et dépendances non vérifiables par l'API déclarés par Claude à la dernière écriture de steps
