@@ -147,5 +147,5 @@ lecture par chemin via `AGENT_DATA_DIR`/dépôt d'origine à traiter dans la pha
 | 1 | agent-socle | #1 | socle v0.1.0 (tag) : 22 modules + `git_tools`, `horodatage`, `chemins` ; 140 tests passés |
 | 2 | agent-socle | #2 | v0.2.0 (tag) : `projets` (façade + client 8512), `fichiers`, `config_commune` ; 148 tests |
 | 2 | agent-projets | #1 | API 8512, IHM 8504 (registre + tests de connexion), CLI ; 7 tests |
-| 2 | agent-scrum-master | #54 | socle v0.2.0, tests de connexion déplacés (lien vers 8504) ; pytest : PYTEST_P2 |
+| 2 | agent-scrum-master | #54 | socle v0.2.0, tests de connexion déplacés (lien vers 8504) ; pytest 912 passés + 141 au socle = 1 053 (référence), 0 échec |
 | 1 | agent-scrum-master | #53 | utilise `agent_socle` ; 11 fichiers de tests partis au socle ; pytest 914 passés + 139 au socle = 1 053 (référence), 0 échec |
