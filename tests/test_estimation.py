@@ -1,7 +1,8 @@
 """Chiffrage de l'analyse d'un ticket : section, cohérence, publication à la validation, calibrage, épopées."""
 import pytest
 
-from tools import analysis_publication, estimation, memory_tools
+from tools import analysis_publication, estimation
+from agent_socle import memory_tools
 
 ANALYSIS = """# Cadrage PRJ-12
 

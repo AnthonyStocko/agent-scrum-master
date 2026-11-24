@@ -15,7 +15,7 @@ from tools import cucumber_import as ci
 from tools import cucumber_overview as co
 from tools import cucumber_profile as cp
 from tools import cucumber_tools as ct
-from tools.secret_tools import mask_secrets
+from agent_socle.secret_tools import mask_secrets
 
 ROOT = f"src/test/resources/cucumber/features/{CLIENT}/WMS"
 PAREN = f"{ROOT}/Retours.feature"            # nom de feature avec parenthèse : en-tête Surefire réécrit

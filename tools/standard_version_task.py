@@ -230,7 +230,7 @@ def fast_sources(client: str, source: Source, task: Task, builds_reader) -> tupl
 def run(client: str, client_repo: str, std_repo: str, deadline_s: int = DEADLINE_S, builds_reader=None) -> dict:
     """Détection complète, état et journal tenus à jour ; renvoie l'état final."""
     if builds_reader is None:
-        from tools import jenkins_tools
+        from agent_socle import jenkins_tools
         builds_reader = (lambda job: jenkins_tools.recent_builds(job, 20)) if jenkins_tools.jenkins_configured() \
             else (lambda job: [])
     task = Task(client, deadline_s)

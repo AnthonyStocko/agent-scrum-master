@@ -5,7 +5,8 @@ init sur un environnement remonté, clear du socle prouvé, part des recherches 
 """
 import os
 
-from tools import client_version, cucumber_bilan, cucumber_job as cjob, cucumber_profile, cucumber_simple, db_tools
+from tools import client_version, cucumber_bilan, cucumber_job as cjob, cucumber_profile, cucumber_simple
+from agent_socle import db_tools
 
 DEFINITIONS = {name: {"type": kind, "defaut": default} for name, kind, default in (
     ("COMPONENT_OWNER", "StringParameterDefinition", "autreclient"),

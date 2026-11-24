@@ -79,7 +79,7 @@ def from_database(schemas: list) -> dict:
     {"noms": {nom: source}, "classes": {classe: source}, "source": libellé, "erreur": ''} lus dans la base du client
     (premier schéma de `schemas` qui a la table des jobs, connexion DB_* puis CUCUMBER_DB_*), lecture seule.
     """
-    from tools import db_tools
+    from agent_socle import db_tools
     errors = []
     for profile in ("", "cucumber"):
         if not db_tools.is_db_configured(profile):
@@ -134,7 +134,7 @@ def from_standard(std_root, version: str, classes: list, errors: list = None) ->
     Classes présentes dans le Standard à la référence de la version du client : {classe: source}. `std_root` :
     dossier de clones ou source Bitbucket (tools/bitbucket_std). Classe trouvée seulement hors version : `errors`.
     """
-    from tools.bitbucket_std import ref_label, standard_source
+    from agent_socle.bitbucket_std import ref_label, standard_source
     std = standard_source(std_root)
     found, candidates = {}, _std_candidates(version)
     for cls in [c for c in classes if c]:
@@ -184,7 +184,7 @@ def deployed_modules(client_root: str, std_root, version: str) -> set:
     (référence distante), plus ceux des contribs qu'ils importent (« import: »), lus dans le Standard à sa version,
     récursivement. Vide si rien n'est lisible.
     """
-    from tools.bitbucket_std import standard_source
+    from agent_socle.bitbucket_std import standard_source
     std = standard_source(std_root)
     candidates = _std_candidates(version)
     modules, seen, pending = set(), set(), client_bundle_lists(client_root)
@@ -225,7 +225,7 @@ def names_in_standard(std_root, version: str, names: list, deployed: set = None,
     déployé chez lui (`deployed`, deployed_modules ; None : non vérifié). ({nom: source}, {nom: module non déployé}).
     Source Bitbucket : candidat trouvé sur la branche par défaut mais absent à la version → `errors` (indéterminé).
     """
-    from tools.bitbucket_std import ref_label, standard_source
+    from agent_socle.bitbucket_std import ref_label, standard_source
     std = standard_source(std_root)
     found, elsewhere, candidates = {}, {}, _std_candidates(version)
     for name in [n for n in names if n]:
@@ -379,7 +379,7 @@ def check_init(texts: dict, client_root: str, schemas: list, std_root="", versio
     left = [n for n in names if n not in code["noms"]]
     search_errors = []
     wanted_classes = [c for c in classes if c not in code["classes"]]
-    from tools.bitbucket_std import BitbucketUnavailable
+    from agent_socle.bitbucket_std import BitbucketUnavailable
     try:
         deployed = deployed_modules(client_root, std_root, version) if std_root and client_root and left else set()
         standard_names, not_deployed = (names_in_standard(std_root, version, left, deployed or None, search_errors)

@@ -108,7 +108,7 @@ def statement_target(message: str) -> tuple:
 def default_query(sql: str, params: dict) -> list:
     """Requête en lecture seule sur la base des tests Cucumber (CUCUMBER_DB_*, à défaut DB_*), transaction annulée."""
     from sqlalchemy import text
-    from tools import db_tools
+    from agent_socle import db_tools
     previous = db_tools.set_profile("cucumber")
     try:
         with db_tools.readonly_connection() as conn:

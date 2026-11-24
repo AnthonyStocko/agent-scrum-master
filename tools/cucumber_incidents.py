@@ -129,7 +129,7 @@ def client_path(client: str) -> str:
 
 def global_path() -> str:
     """Registre global dans les connaissances partagées ('' si AGENT_KNOWLEDGE_DIR est vide)."""
-    from tools import knowledge_tools
+    from agent_socle import knowledge_tools
     base = knowledge_tools.knowledge_dir()
     return os.path.join(base, GLOBAL_FOLDER, FILE_NAME) if base else ""
 
@@ -170,7 +170,7 @@ def load_global() -> dict:
 
 def _save_global(data: dict) -> bool:
     """Registre global réécrit d'un bloc (secrets masqués) ; False si le partage est indisponible."""
-    from tools import knowledge_tools, secret_tools
+    from agent_socle import knowledge_tools, secret_tools
     path = global_path()
     if not path:
         return False
@@ -581,7 +581,7 @@ def bootstrap(client: str, fetch_params=None, imports: list = None) -> list:
     """
     from tools import cucumber_import, cucumber_profile
     if fetch_params is None:
-        from tools import jenkins_tools
+        from agent_socle import jenkins_tools
         fetch_params = jenkins_tools.build_parameters
     profile = cucumber_profile.effective_profile(cucumber_profile.load_profile(client))
     roles = profile.get("job_roles") or {}
@@ -908,7 +908,8 @@ def check_concurrency(client: str, build_url: str, jobs: list, error_text: str =
     concurrency() sur les données réelles : build Jenkins, builds récents des jobs exclusifs, journal des copies.
     Schéma : celui de l'erreur du serveur s'il est cité (`error_text`), sinon celui du build.
     """
-    from tools import db_restore, jenkins_tools
+    from tools import db_restore
+    from agent_socle import jenkins_tools
     info = jenkins_tools.build_info(build_url) if build_url else {}
     builds = [b for job in jobs or [] for b in jenkins_tools.recent_builds(job, 30)]
     me = next((b for b in builds if b.get("url") == jenkins_tools.same_base(build_url)), {})

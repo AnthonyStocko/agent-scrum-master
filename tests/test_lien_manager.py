@@ -3,7 +3,7 @@ import os
 
 import pytest
 
-from tools import lien_manager as lm
+from agent_socle import lien_manager as lm
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PAGES = ("integration", "lancement", "cucumber", "assistant")
@@ -28,7 +28,8 @@ def test_signature_projet_et_ticket():
 
 def test_app_applique_le_lien_une_fois(monkeypatch, tmp_path):
     testing = pytest.importorskip("streamlit.testing.v1")
-    from tools import cucumber_detection, jira_tools, standard_version_task
+    from tools import cucumber_detection, standard_version_task
+    from agent_socle import jira_tools
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".env").write_text("", encoding="utf-8")
     monkeypatch.delenv("AGENT_AUTH", raising=False)

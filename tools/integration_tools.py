@@ -12,7 +12,7 @@ import os
 import re
 from datetime import datetime
 
-from tools.jira_tools import update_jira_section
+from agent_socle.jira_tools import update_jira_section
 
 INTEGRATION_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".tmp", "integration")
 SECTION_TITLE = "Intégration du besoin"

@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from tools import bitbucket_std as bs
+from agent_socle import bitbucket_std as bs
 from tools import cucumber_jobs as cj
 
 TREE = {  # dépôt -> branche -> (commit, {chemin: contenu})

@@ -24,11 +24,16 @@ import os
 import re
 from datetime import datetime, timezone
 
-from tools import (cucumber_data_rules, cucumber_decisions, cucumber_failures, cucumber_incidents, cucumber_profile,
-                   cucumber_server_logs, db_tools, groundcover_tools, jenkins_tools, mcp_servers)
+from tools import (cucumber_data_rules,
+    cucumber_decisions,
+    cucumber_failures,
+    cucumber_incidents,
+    cucumber_profile,
+    cucumber_server_logs)
+from agent_socle import db_tools, groundcover_tools, jenkins_tools, mcp_servers
 from tools.cucumber_diagnostic import TEMP_PREFIX
 # Masquage commun à tout l'agent (réexporté : MASK, SECRET_PATTERNS, mask_secrets)
-from tools.secret_tools import MASK, SECRET_PATTERNS, mask_secrets  # noqa: F401
+from agent_socle.secret_tools import MASK, SECRET_PATTERNS, mask_secrets  # noqa: F401
 from tools.cucumber_tools import _git, _read_json, _read_text_file, _write_json, _write_text, a_revoir_tag, cache_dir
 from tools.cucumber_verify import (CAUSE_LABELS, _LOG_STAMP, _duration, _step_outputs, _timestamp, all_verified,
                                    expected_count,

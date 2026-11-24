@@ -45,7 +45,7 @@ def test_set_aside_then_reactivate(tmp_path, monkeypatch):
 
 def test_preparation_and_set_aside_are_shared(tmp_path, monkeypatch):
     from tools import cucumber_results as cr
-    from tools import knowledge_tools as kt
+    from agent_socle import knowledge_tools as kt
     monkeypatch.setattr(ct, "CACHE_ROOT", str(tmp_path / "cache"))
     monkeypatch.setenv("AGENT_KNOWLEDGE_DIR", str(tmp_path / "partage"))
     published = []

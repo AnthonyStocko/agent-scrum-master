@@ -25,11 +25,11 @@ Aucun autre dépôt. Les modules gardent leur nom (seul le chemin d'import chang
 
 | Destination | Modules |
 |---|---|
-| Socle | `token_measure`, `token_report`, `ui_timer`, `jira_cli`, `jira_guard`, `jira_tools` (voir §4), `jenkins_tools`, `bitbucket_std`, `bitbucket_code`, `db_tools`, `secret_tools`, `env_tools`, `auth_tools`, `auth_setup`, `lien_manager`, `mcp_servers`, `groundcover_tools`, `odatio_docs`, `skills`, `knowledge_tools`, `memory_tools`, `livraisons`, `cucumber_lock`, `cucumber_cost` |
+| Socle | `token_measure`, `token_report`, `ui_timer`, `jira_cli`, `jira_guard`, `jira_tools` (voir §4), `jenkins_tools`, `bitbucket_std`, `bitbucket_code`, `db_tools`, `secret_tools`, `env_tools`, `auth_tools`, `auth_setup`, `lien_manager`, `mcp_servers`, `groundcover_tools`, `odatio_docs`, `skills`, `knowledge_tools`, `memory_tools`, `livraisons` ; extraits `git_tools` (`cucumber_tools`) et `horodatage` (`cucumber_verify`) ; `chemins` (`AGENT_DATA_DIR`) |
 | Projets | `config_commune` ; extraits : registre des projets de `cucumber_detection` (`known_projects`, `save_project`) et lecture de la version choisie de `client_version` (§4) |
 | Intégration | `integration_tools` |
 | Lancement | `analysis_publication` (lecture du statut extraite au socle, §4), `estimation`, `epic_tools` |
-| Cucumber | les 67 autres `cucumber_*`, `client_version`, `standard_version`, `standard_version_task`, `cucumber_detection`, `db_restore`, `xlsm_tool`, `tools/data/cucumber_nettoyage/` |
+| Cucumber | les 69 `cucumber_*` (dont `cucumber_lock` et `cucumber_cost`, cf. §7), `client_version`, `standard_version`, `standard_version_task`, `cucumber_detection`, `db_restore`, `xlsm_tool`, `tools/data/cucumber_nettoyage/` |
 | Revue de PR | `pr_review` (base REST Bitbucket extraite au socle, §4) |
 | Manager | `assistant`, `poller_control`, `lecture_manager` |
 
@@ -81,10 +81,10 @@ gardée n'est modifiée.
 
 | Module d'origine | Fonctions → socle | Utilisateur hors agent |
 |---|---|---|
-| `cucumber_tools` | `_git`, `git_repos`, `pick_ref`, `_read_json`, `_write_json`, `_read_text_file`, `cache_dir`, `CACHE_ROOT`, `STD_CACHE_DIR`, `java_package_segment`, `CLIENT_REFS`, `client_ref`, `client_name_from_repo`, `STD_REF_LOG`, `work_id` | `bitbucket_std`, `main.py` commun |
+| `cucumber_tools` | fait (phase 1) : `AGENT_GIT_NAME`, `AGENT_GIT_EMAIL`, `_COMMITTING`, `agent_identity`, `_git`, `git_repos`, `pick_ref` → `agent_socle.git_tools` ; en phase 3 selon `main.py` commun : `client_name_from_repo`, `STD_REF_LOG`, `work_id`… | `bitbucket_std`, `main.py` commun |
 | `pr_review` | `base_url`, `_headers`, `configured`, `BitbucketError`, `create_pull_request` | `cucumber_repo_setup`, Cucumber (Java 21) |
 | `analysis_publication` | `cadrage_path`, `status` et leurs aides (`load_record`, `_fingerprint`, `_read`) | `lecture_manager` |
-| `cucumber_verify` | `_timestamp` | `groundcover_tools` |
+| `cucumber_verify` | fait (phase 1) : `_timestamp` → `agent_socle.horodatage` | `groundcover_tools` |
 | `cucumber_delivery` | `disable_push` | `ensure_local_repo` (socle) |
 | `client_version` | `cucumber_std_ref`, `cucumber_std_names` | `ensure_local_repo` (socle) |
 | `standard_version` | `normalize` | `ensure_local_repo` (socle) |
@@ -128,6 +128,10 @@ lecture par chemin via `AGENT_DATA_DIR`/dépôt d'origine à traiter dans la pha
 | Délégation CLI | `agent-scrum-master/main.py --step X` relance `<dépôt de l'agent>\main.py` avec les mêmes arguments (`AGENT_<NOM>_DIR`, défaut `C:\agent-<nom>`) |
 | Tests | suivent leur code (`tests/test_<module>.py`) ; patchs `tools.X` réécrits par script ; un test par dépôt vérifie l'absence d'import d'un autre agent |
 | Découpage futur de Cucumber | proposé en phase 6 seulement (génération, vérification, livraison) |
+| `cucumber_lock`, `cucumber_cost` (phase 1) | restent dans Cucumber : `cucumber_cost` n'est appelé que par Cucumber ; `cucumber_lock` dépend de `cucumber_tools.cache_dir`/`CACHE_ROOT` (remplacé par 10 tests) — verrou générique au socle en phase 8, lecture par le manager en phase 7 |
+| Fonctions de `main.py`/`app.py` pour le socle (§3) | extraites en phase 3, avec le premier agent qui les utilise ; `jira_tools.update_jira_section` → Intégration en phase 4 |
+| Chemins des CLI lancées par Claude | `main.py` : `tools/<module>.py` → `<module>.__file__` (fichier du socle) ; seul le chemin change |
+| Tests liés aux documents de l'application (`.env.example`, `README.md`, `.env`) | dans le socle, lus sous `chemins.DATA_DIR` (mêmes fichiers) |
 | Référence pytest (main 4e6fba8) | 1 053 passés, 1 ignoré, 0 échec (les 3 échecs connus ne se reproduisent plus) ; suite complète ≈ 30 min |
 
 ## 8. Journal d'avancement
@@ -135,3 +139,5 @@ lecture par chemin via `AGENT_DATA_DIR`/dépôt d'origine à traiter dans la pha
 | Phase | Dépôt | PR | Résultat |
 |---|---|---|---|
 | 0 | agent-scrum-master | #52 | cartographie ; 6 dépôts privés créés et clonés sous `C:\` ; pytest 1 053 passés |
+| 1 | agent-socle | #1 | socle v0.1.0 (tag) : 22 modules + `git_tools`, `horodatage`, `chemins` ; 140 tests passés |
+| 1 | agent-scrum-master | #53 | utilise `agent_socle` ; 11 fichiers de tests partis au socle ; pytest : PYTEST_P1 |

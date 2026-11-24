@@ -9,7 +9,8 @@ import shutil
 import pytest
 from streamlit.testing.v1 import AppTest
 
-from tools import auth_setup, auth_tools, cucumber_decisions, knowledge_tools
+from tools import cucumber_decisions
+from agent_socle import auth_setup, auth_tools, knowledge_tools
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 AUTH = {"redirect_uri": "http://localhost:8501/oauth2callback", "cookie_secret": "x" * 32,
@@ -20,7 +21,7 @@ PERSON = {"nom": "Camille Martin", "adresse": "camille.martin@example.com", "gro
 
 def _protected_page():
     import streamlit as st
-    from tools import auth_tools
+    from agent_socle import auth_tools
     auth_tools.require_login(st)
     st.write("CONTENU PROTÉGÉ")
 
@@ -122,7 +123,7 @@ def test_system_user_when_auth_is_off(monkeypatch):
 
 def _secret_page():
     import streamlit as st
-    from tools import auth_tools
+    from agent_socle import auth_tools
     st.session_state["valeur"] = auth_tools.secret_field(st, "JENKINS_API_TOKEN")
 
 

@@ -8,9 +8,9 @@ Une fois créée, chaque tâche possède son '<CLÉ>-cadrage.md' : l'étape patc
 import json
 import os
 
-from tools.jira_tools import create_jira_issue, resolve_epic_task_type, set_jira_description_markdown
+from agent_socle.jira_tools import create_jira_issue, resolve_epic_task_type, set_jira_description_markdown
 from tools import analysis_publication
-from tools.memory_tools import save_cadrage_memory
+from agent_socle.memory_tools import save_cadrage_memory
 
 
 def epic_manifest_path(epic_key: str) -> str:

@@ -165,7 +165,7 @@ def check_business_data(worktree: str, files: list, profile: dict, query=None) -
 
 def copy_query(sql: str, schema: str, limit: int = MAX_CODES) -> list:
     """Requête de lecture dans la copie (base des tests, profil « cucumber » de db_tools) : lignes [{"code": …}]."""
-    from tools import db_tools
+    from agent_socle import db_tools
     previous = db_tools.set_profile("cucumber")
     try:
         out = db_tools.run_query(sql, schema, limit=limit)
@@ -180,7 +180,7 @@ def copy_rows(sql: str, schema: str, limit: int = 20000) -> list:
     Requête de lecture dans la copie sans la mise en forme de db_tools : première colonne de chaque ligne en entier
     (ni plafond de 200 lignes, ni cellule tronquée ; binaire en hexadécimal) — [{"code": …}]. Analyses statiques.
     """
-    from tools import db_tools
+    from agent_socle import db_tools
     previous = db_tools.set_profile("cucumber")
     try:
         executed = db_tools.validate_select(sql, db_tools.get_db_config()["type"])
@@ -612,7 +612,7 @@ class RunGuard:
 
     def check(self, build_url: str) -> str:
         """'' si le run utilise le schéma copié ; sinon le build est arrêté et le message est renvoyé."""
-        from tools import jenkins_tools
+        from agent_socle import jenkins_tools
         read = self._console or (lambda url: jenkins_tools.build_bytes(url, "consoleText").decode("utf-8", "replace"))
         deadline = time.time() + self.wait_s
         found, proof = "", ""
@@ -701,7 +701,7 @@ def external_connections(schema: str, query) -> list:
             continue
         for row in rows:
             code, _, url = str(row.get("code", "")).partition(_SEPARATOR)
-            from tools import secret_tools
+            from agent_socle import secret_tools
             host = secret_tools.mask_secrets((_URL_HOST.match(url.strip()) or [None, ""])[1])[0]
             found.append({"type": kind, "table": table, "code": code, "hote": host, "neutralisation": action})
     # Toutes les autres tables de configuration (colonnes d'adresse, d'hôte, d'URL, de file…) : relevé générique de

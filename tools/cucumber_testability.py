@@ -170,7 +170,7 @@ def document_paths(client_name: str) -> list:
     """A_REVOIR.md du worktree, COUVERTURE (récapitulatif) et documents partagés du client."""
     paths = [os.path.join(worktree_dir(client_name), "A_REVOIR.md"), coverage_path(client_name)]
     try:
-        from tools import knowledge_tools
+        from agent_socle import knowledge_tools
         if knowledge_tools.enabled():
             folder = os.path.join(knowledge_tools.knowledge_dir(), knowledge_tools.safe_name(client_name))
             paths += _walk(folder, (".md",))

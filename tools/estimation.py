@@ -247,7 +247,7 @@ def _hours_to_unit(hours: float, config: dict) -> float:
 
 def memory_history(project: str, query_text: str, exclude: str, components=None) -> list:
     """Tickets similaires de la mémoire avec chiffrage et/ou temps réel : [{cle, titre, chiffrage, reel, unite}]."""
-    from tools import memory_tools
+    from agent_socle import memory_tools
     out = []
     for item in memory_tools.find_similar_tickets(project, component_name=components, query_text=query_text,
                                                   exclude_issue_key=exclude, max_results=MAX_HISTORY * 2):
@@ -291,7 +291,7 @@ def jira_history(project: str, query_text: str, exclude: str, config: dict, sear
 
 def _jira_search(jql: str, fields: list) -> list:
     import requests
-    from tools.jira_tools import _jira_connection
+    from agent_socle.jira_tools import _jira_connection
     api, auth = _jira_connection()
     response = requests.post(f"{api}/search/jql", auth=auth, json={"jql": jql, "maxResults": MAX_HISTORY,
                                                                    "fields": fields}, timeout=30)
@@ -388,7 +388,7 @@ def publish(issue_key: str, text: str, project: str = "", put=None) -> dict:
 
 def _jira_put_fields(issue_key: str, fields: dict) -> None:
     import requests
-    from tools.jira_tools import _jira_connection
+    from agent_socle.jira_tools import _jira_connection
     api, auth = _jira_connection()
     response = requests.put(f"{api}/issue/{issue_key}", auth=auth, json={"fields": fields}, timeout=30)
     if response.status_code not in (200, 204):
@@ -396,7 +396,7 @@ def _jira_put_fields(issue_key: str, fields: dict) -> None:
 
 
 def record_estimate(issue_key: str, project: str, parsed: dict, config: dict) -> None:
-    from tools import memory_tools
+    from agent_socle import memory_tools
     data = memory_tools.load_ticket_memory(issue_key, project)
     data["chiffrage"] = {**totals(parsed), "unite": config["unite"], "date": datetime.now().isoformat(timespec="seconds"),
                          "activites": [{k: r[k] for k in ("activite", "basse", "probable", "haute")}
@@ -409,7 +409,7 @@ def record_actuals(project: str, fetch=None) -> list:
     Tickets livrés (statut terminé) dont le chiffrage est mémorisé sans temps réel : temps passé (Jira) comparé au
     chiffrage, enregistré dans la mémoire. `fetch(key)` → {done, timespent (s)}. Renvoie les écarts enregistrés.
     """
-    from tools import memory_tools
+    from agent_socle import memory_tools
     config = settings(project)
     out = []
     for mem in memory_tools._load_all():
@@ -434,7 +434,7 @@ def record_actuals(project: str, fetch=None) -> list:
 
 def _jira_actuals(issue_key: str) -> dict:
     import requests
-    from tools.jira_tools import _jira_connection
+    from agent_socle.jira_tools import _jira_connection
     api, auth = _jira_connection()
     response = requests.get(f"{api}/issue/{issue_key}?fields=timespent,status", auth=auth, timeout=15)
     if response.status_code != 200:

@@ -18,7 +18,8 @@ import subprocess
 import time
 from datetime import datetime, timedelta, timezone
 
-from tools import cucumber_incidents, cucumber_job, cucumber_routes, jenkins_tools, memory_tools
+from tools import cucumber_incidents, cucumber_job, cucumber_routes
+from agent_socle import jenkins_tools, memory_tools
 from tools.cucumber_tools import (_HTTP_CALL, _expression_regex, _first_argument, _git, _http_path, _java_methods,
                                   _read_text_file, _resolve, _step_prefix, _string_constants, _write_text,
                                   WORKSPACE_DIR, a_revoir_tag, blob_texts, disk_class_constants, extract_cucumber,
@@ -1094,14 +1095,7 @@ def _step_outputs(step: dict) -> list:
     return outputs
 
 
-def _timestamp(value) -> datetime:
-    """Horodatage ISO d'un rapport Cucumber (start_timestamp), en UTC ; None s'il est absent ou illisible."""
-    try:
-        stamp = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return stamp.astimezone(timezone.utc) if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
-
+from agent_socle.horodatage import _timestamp  # noqa: E402,F401 — extrait au socle
 
 def _duration(step: dict) -> float:
     """Durée d'un step du rapport, en secondes (Cucumber l'écrit en nanosecondes)."""
@@ -1266,7 +1260,7 @@ def run_on_branch(worktree: str, tags: str, env: str, overrides: dict, label: st
     """
     from tools import cucumber_checks
     from tools.cucumber_import import console_facts, console_results
-    from tools.secret_tools import mask_secrets
+    from agent_socle.secret_tools import mask_secrets
     profile = sources.get("profil") or {}
     job = verification_job(profile)
     branch = (profile.get("verify_branch") or "").strip()

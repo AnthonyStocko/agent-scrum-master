@@ -17,22 +17,89 @@ from urllib.parse import urlsplit
 import requests
 from dotenv import load_dotenv
 
-from tools import env_tools, secret_tools, cucumber_cost, cucumber_lessons, estimation, token_measure, cucumber_handover, cucumber_spec_memory, cucumber_prevention
+from tools import (cucumber_cost,
+    cucumber_lessons,
+    estimation,
+    cucumber_handover,
+    cucumber_spec_memory,
+    cucumber_prevention)
+from agent_socle import env_tools, secret_tools, token_measure
 from tools import cucumber_env_diagnosis, cucumber_copied_config, cucumber_anticipation, cucumber_anticipation_code, cucumber_business_rules, cucumber_cleanup
-from tools import bitbucket_std, client_version, cucumber_a_revoir, cucumber_arbitrage, cucumber_compile, cucumber_db_proof, cucumber_fix_budget, cucumber_stray, cucumber_incidents, cucumber_init_fix, cucumber_isolation, cucumber_lock, cucumber_routes, cucumber_test_data, cucumber_test_selection, cucumber_jobs, cucumber_modules, cucumber_delivery, cucumber_library, cucumber_library_upgrade, standard_version, cucumber_bilan, cucumber_checks, cucumber_coverage, cucumber_data_rules, cucumber_disabled, cucumber_guard, cucumber_job, cucumber_decisions, cucumber_detection, cucumber_diagnostic, cucumber_failures, cucumber_environment, cucumber_rules, cucumber_run, cucumber_testability, cucumber_preflight, cucumber_results, cucumber_links, cucumber_server_logs, groundcover_tools, mcp_servers, cucumber_import, cucumber_init, cucumber_recreation, cucumber_init_data, cucumber_initializers, cucumber_profile, cucumber_tools, cucumber_verify, cucumber_versions, cucumber_wait_steps, db_tools, integration_tools, knowledge_tools, pr_review, assistant, db_restore, jenkins_tools, skills
-from tools.jira_cli import attach_files, create_or_get_issue
+from tools import (client_version,
+    cucumber_a_revoir,
+    cucumber_arbitrage,
+    cucumber_compile,
+    cucumber_db_proof,
+    cucumber_fix_budget,
+    cucumber_stray,
+    cucumber_incidents,
+    cucumber_init_fix,
+    cucumber_isolation,
+    cucumber_lock,
+    cucumber_routes,
+    cucumber_test_data,
+    cucumber_test_selection,
+    cucumber_jobs,
+    cucumber_modules,
+    cucumber_delivery,
+    cucumber_library,
+    cucumber_library_upgrade,
+    standard_version,
+    cucumber_bilan,
+    cucumber_checks,
+    cucumber_coverage,
+    cucumber_data_rules,
+    cucumber_disabled,
+    cucumber_guard,
+    cucumber_job,
+    cucumber_decisions,
+    cucumber_detection,
+    cucumber_diagnostic,
+    cucumber_failures,
+    cucumber_environment,
+    cucumber_rules,
+    cucumber_run,
+    cucumber_testability,
+    cucumber_preflight,
+    cucumber_results,
+    cucumber_links,
+    cucumber_server_logs,
+    cucumber_import,
+    cucumber_init,
+    cucumber_recreation,
+    cucumber_init_data,
+    cucumber_initializers,
+    cucumber_profile,
+    cucumber_tools,
+    cucumber_verify,
+    cucumber_versions,
+    cucumber_wait_steps,
+    integration_tools,
+    pr_review,
+    assistant,
+    db_restore)
+from agent_socle import (bitbucket_std,
+    groundcover_tools,
+    mcp_servers,
+    db_tools,
+    knowledge_tools,
+    jenkins_tools,
+    skills)
+from agent_socle.jira_cli import attach_files, create_or_get_issue
 from tools.epic_tools import (
     _restore_keys as restore_epic_keys, draft_tasks, epic_manifest_path, load_epic_manifest, save_epic_manifest,
     sync_epic_tasks, attach_existing_analyses, missing_analyses,
 )
-from tools import (analysis_publication, cucumber_java21, cucumber_repo_setup, cucumber_simple, cucumber_simple_init,
-                   jira_guard, livraisons, odatio_docs)
-from tools.jira_tools import (
+from tools import analysis_publication, cucumber_java21, cucumber_repo_setup, cucumber_simple, cucumber_simple_init
+from agent_socle import jira_guard, livraisons, odatio_docs
+# Dossier des modules du socle (CLI lancées par Claude : db_tools, bitbucket_code, groundcover_tools…)
+SOCLE_DIR = os.path.dirname(os.path.abspath(odatio_docs.__file__))
+from agent_socle.jira_tools import (
     fetch_application_tickets, find_jira_issue_by_summary, get_epic_children, get_full_jira_issue_context,
     get_jira_issue_details,
     get_issue_field_values, std_only_projects, update_jira_release_note,
 )
-from tools.memory_tools import (
+from agent_socle.memory_tools import (
     _extract_recap,
     get_capitalized_experience,
     save_cadrage_memory,
@@ -149,7 +216,7 @@ def render_prompt(name: str, **values) -> str:
 OPTIONAL_PROMPT_VALUES = {"odatio_docs_block": ""}
 
 # Documentation développeur ODATiO (tools/odatio_docs.py) : lecture seule, limitée au site de ODATIO_DOCS_URL
-ODATIO_DOCS_CLI = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools", "odatio_docs.py")
+ODATIO_DOCS_CLI = os.path.join(SOCLE_DIR, "odatio_docs.py")
 ODATIO_DOCS_USAGE = {
     "analyse": "l'analyse et le cadrage du ticket et son chiffrage",
     "patch": "le développement du patch et la correction du code",
@@ -607,7 +674,7 @@ def build_logs_block(python_exe: str, workspace_dir: str) -> str:
     """Bloc de prompt de la recherche en lecture seule dans les logs groundcover ('' si non configuré)."""
     if not groundcover_tools.configured():
         return ""
-    cli = f'"{python_exe}" "{os.path.join(workspace_dir, "tools", "groundcover_tools.py")}"'
+    cli = f'"{python_exe}" "{os.path.join(SOCLE_DIR, "groundcover_tools.py")}"'
     print(f"[LOGS] Recherche dans les logs groundcover activée (filtre {groundcover_tools.config()['filter']}).")
     return "\n" + render_prompt("logs_access", cli=cli, max_lines=groundcover_tools.MAX_LINES,
                                  max_minutes=int(groundcover_tools.MAX_WINDOW.total_seconds() // 60))
@@ -689,7 +756,7 @@ def _build_db_block(db_schema: str, python_exe: str, workspace_dir: str, step: s
         return ""
     db_type = db_tools.get_db_config()["type"]
     print(f"[BDD] Accès en lecture seule activé : {db_tools.describe_db_target()}, schéma {db_schema}.")
-    db_cli = os.path.join(workspace_dir, "tools", "db_tools.py")
+    db_cli = os.path.join(SOCLE_DIR, "db_tools.py")
     base_cmd = f'"{python_exe}" "{db_cli}" --schema {db_schema}' + (f" --profile {profile}" if profile else "")
     if db_type == "sqlserver":
         schema_hint = f"Sous SQL Server, préfixe les tables par le schéma ({db_schema}.NOM_TABLE)."
@@ -1454,7 +1521,7 @@ def cadrage_remote_plan(std_key: str, client_repo_arg: str, http=None) -> dict:
     "std": RemoteStandard, "client_project", "client_repos": [dépôts] ou None (projet entier)}. Configuration
     incomplète, dépôt client sans adresse Bitbucket ou API en erreur : mode local (copies d'ensure_local_repo).
     """
-    from tools import bitbucket_code
+    from agent_socle import bitbucket_code
     base = os.getenv("BITBUCKET_URL", "").strip().rstrip("/")
     local = lambda motif: {"remote": False, "motif": motif}  # noqa: E731
     if not base:
@@ -1485,7 +1552,7 @@ def cadrage_remote_plan(std_key: str, client_repo_arg: str, http=None) -> dict:
 def cadrage_remote_scope(plan: dict, odatio_version: str, python_exe: str, workspace_dir: str) -> str:
     """Consigne d'accès au code du cadrage lu dans Bitbucket (bloc bitbucket_code_cadrage) et lignes de journal."""
     from tools.standard_version import normalize, std_refs
-    cli = f'"{python_exe}" "{os.path.join(workspace_dir, "tools", "bitbucket_code.py")}"'
+    cli = f'"{python_exe}" "{os.path.join(SOCLE_DIR, "bitbucket_code.py")}"'
     std_project = plan["std"].project
     # Version du Standard : ODATIO_VERSION (références de version) sinon branche par défaut, comme la copie locale
     std_candidates = list(std_refs(odatio_version, ("HEAD",)))
@@ -1777,7 +1844,7 @@ def main():
             branch_rule = f"Projet {target_project} : utilise la branche de base 'dev' sur le socle Standard. Branche de travail : '{target_issue}_dev_...'."
             repo_scope = f"Explore le code source UNIQUEMENT dans le socle standard '{local_std_repo}'."
             if remote_code:
-                code_cli = f'"{python_exe}" "{os.path.join(workspace_dir, "tools", "bitbucket_code.py")}"'
+                code_cli = f'"{python_exe}" "{os.path.join(SOCLE_DIR, "bitbucket_code.py")}"'
                 branch_rule = (f"Projet {target_project} : branche de base du Standard « dev » (à défaut « development », "
                                f"puis la branche par défaut du dépôt, résolue par l'outil ci-dessous). Branche de "
                                f"travail : '{target_issue}_dev_...'.")
@@ -2034,7 +2101,7 @@ def main():
         client_name = os.path.basename(local_client_repo.rstrip("\\/")).split("_", 1)[-1].upper() if local_client_repo else "STD"
         postmerge_summary = POSTMERGE_SUMMARY.format(source=target_issue)
         description_file = os.path.join(workspace_dir, f"{target_issue}-postmerge-cucumber.md")
-        jira_cli = os.path.join(workspace_dir, "tools", "jira_cli.py")
+        jira_cli = os.path.join(SOCLE_DIR, "jira_cli.py")
         worktree_root = os.path.join(POSTMERGE_DIR, "worktrees")
         source_title = jira_context.get("summary", "") or "(ticket source introuvable dans Jira)"
 
@@ -2568,7 +2635,7 @@ def run_anticipation(client: str, client_root: str, force: bool = False) -> dict
     if not force and previous.get("empreinte") == empreinte:
         return previous
     try:
-        from tools import bitbucket_code
+        from agent_socle import bitbucket_code
         std = bitbucket_code.standard("")
     except Exception as exc:  # noqa: BLE001 - Standard illisible : composants du Standard non vérifiés
         print(f"[ANTICIPATION] Standard illisible ({exc}) : composants du Standard non vérifiés.")

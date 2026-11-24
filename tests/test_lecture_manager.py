@@ -8,7 +8,8 @@ from unittest import mock
 
 import pytest
 
-from tools import analysis_publication, livraisons, lecture_manager as lecture
+from tools import analysis_publication, lecture_manager as lecture
+from agent_socle import livraisons
 
 
 @pytest.fixture
