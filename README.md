@@ -2,6 +2,31 @@
 
 Agent d'assistance aux développements Odatio. À partir d'un ticket Jira, il produit l'analyse (cadrage fonctionnel et technique), puis le patch Git et la release note, et les publie sur le ticket. Il s'appuie sur la CLI [Claude Code](https://docs.claude.com/fr/docs/claude-code/overview).
 
+## Découpage en agents (novembre 2026)
+
+Le code de cet agent est désormais réparti en dépôts frères sous `C:\`, chacun avec sa CLI, son IHM, ses prompts
+et ses tests, et `agent-socle` pour seule dépendance interne (détail : `docs/DECOUPAGE.md`). Ce dépôt ne garde que
+l'aiguillage des étapes, la page Configuration (`.env` global, lu par tous les agents) et les données
+(`.tmp/`, fichiers produits, `.env`), que chaque agent lit ici par `AGENT_DATA_DIR`.
+
+| Agent | Dépôt | IHM | Étapes (`main.py --step`) |
+|---|---|---|---|
+| Socle commun | `agent-socle` | — | bibliothèque : Claude Code, Jira, Bitbucket, Jenkins, journaux, travaux en cours |
+| Projets et connexions | `agent-projets` | 8504 (API 8512) | `api`, `projets` |
+| Intégration | `agent-integration` | 8505 | `besoin`, `cadrage-reponses` |
+| Lancement | `agent-lancement` | 8506 | `cadrage`, `refine`, `epic-cadrage`, `epic-sync`, `patch` |
+| Cucumber | `agent-cucumber` | 8507 | `generate-cucumber-client`, `generate-cucumber-postmerge`, `restore-config` |
+| Revue de PR | `agent-revue-pr` | 8508 | `review-pr` |
+| Manager | `agent-manager-savoye` | 8500 | `ask` ; Assistant des agents, Connaissances, webhook, poller, lecteur MCP |
+
+- `python main.py --step …` d'ici relance la CLI de l'agent concerné avec les mêmes arguments
+  (`AGENT_<NOM>_DIR`, défaut : le dépôt frère) ; les onglets de cette IHM (8501) renvoient vers l'agent.
+- Les liens `?page=…` du manager mènent directement au bon port.
+- Travaux en cours : chaque étape lancée depuis une IHM tourne hors de la session du navigateur ; à la
+  reconnexion, le panneau « Travaux en cours » de l'agent permet de la suivre, de la reprendre ou de l'arrêter
+  (registre `.tmp/taches/<agent>/`, contexte de page `.tmp/sessions/<auteur>/`).
+- La suite de ce document décrit les fonctionnalités, désormais portées par les agents ci-dessus.
+
 - **Intégration du besoin** : reformulation du besoin et questions ouvertes ajoutées à la description Jira. Les réponses saisies dans l'IHM y sont ajoutées à leur tour.
 - **Analyse / cadrage** d'un ticket : l'analyse reste un brouillon local (`<TICKET>-cadrage.md`) jusqu'à sa validation par l'utilisateur ; elle n'est publiée dans la description Jira, par l'agent, qu'à la validation. Pendant l'analyse, l'agent n'a aucun moyen d'écrire dans Jira (aucun MCP, jeton d'écriture retiré, `.env` illisible ; jeton de lecture facultatif `JIRA_READ_EMAIL` / `JIRA_READ_API_TOKEN`) et la description est contrôlée avant et après l'étape.
 - **Révision** de l'analyse selon vos consignes. Vos corrections sont mémorisées et réutilisées sur les tickets suivants.

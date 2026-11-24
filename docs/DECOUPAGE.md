@@ -152,6 +152,7 @@ lecture par chemin via `AGENT_DATA_DIR`/dépôt d'origine à traiter dans la pha
 | Manager (phase 7) | worktree `C:gent-manager-savoye-phase7` depuis `origin/main` (branche locale de l'utilisateur intacte) ; repris : assistant, lecture_manager, poller_control (`manager/`), webhook_server.py, mcp_lecture.py, `main.py --step ask`, onglets « Assistant des agents » et « Connaissances partagées » ; liens `?page=` d'agent-scrum-master redirigés vers l'agent du registre (sinon agent-scrum-master renvoie) ; registre modèle : 5 agents (venv d'agent-scrum-master) ; venv du manager : python-dotenv, agent-socle `--no-deps`, pytest (dev) |
 | Assistant des agents (phase 7) | code lu : `AGENT_DATA_DIR` et les dépôts des agents (chemins seuls ; le modèle `assistant` inchangé) |
 | Compte Claude (phase 7) | reste dans le formulaire global `.env` de la Configuration d'agent-scrum-master (règle `CLAUDE_CONFIG_DIR` de tous les agents) : le déplacer découperait le formulaire |
+| Travaux en cours (phase 8, changement voulu) | `agent_socle.taches` : relais détaché (`python -m agent_socle.taches <agent> <id> -- <commande>`, CREATE_NEW_PROCESS_GROUP + DETACHED_PROCESS) qui écrit journal de l'exécution et journal technique ; registre `.tmp/taches/<agent>/<id>.json`, statuts en_cours/terminee/echec/interrompue/arretee ; `ihm.run_main_step` lance puis suit le journal (sortie fournie par un processus simulé : lue comme avant, tests inchangés) ; contexte `.tmp/sessions/<auteur>/<agent>.json` (clés par agent ; Cucumber : projet des onglets simple et avancé, `cs_project` et `cucumber_project` — tous les `PERSISTENT_KEYS` rechargés ensemble changeaient la page d'une nouvelle session) ; panneau en tête des IHM Intégration, Lancement, Cucumber, Revue de PR ; récapitulatif dans le tableau de bord du manager ; `cucumber_lock` inchangé (verrou générique non requis) |
 | Référence pytest (main 4e6fba8) | 1 053 passés, 1 ignoré, 0 échec (les 3 échecs connus ne se reproduisent plus) ; suite complète ≈ 30 min |
 
 ## 8. Journal d'avancement
@@ -179,3 +180,8 @@ lecture par chemin via `AGENT_DATA_DIR`/dépôt d'origine à traiter dans la pha
 | 7 | agent-manager-savoye | #9 | Assistant des agents, Connaissances, webhook, poller, lecteur MCP, CLI ask, redirection des liens, registre ; pytest 100, unittest 90 |
 | 7 | agent-socle | #7 | tests de lien_manager déplacés ; 162 tests |
 | 7 | agent-scrum-master | #60 | Assistant, Connaissances, webhook, poller, lecteur MCP partis au manager ; `ask` délégué ; reste Configuration et compatibilité ; pytest 5 passés |
+| 8 | agent-socle | #8 | v0.7.0 (tag) : `taches` (relais détaché, registre, contexte), `run_main_step` détaché et suivi, panneau « Travaux en cours » ; 170 tests |
+| 8 | agent-integration, agent-lancement, agent-revue-pr | #3, #3, #2 | panneau en tête de page, contexte rechargé ; 5, 52, 16 tests |
+| 8 | agent-cucumber | #2 | panneau, contexte (projet simple et avancé), modèle secrets.toml.example |
+| 8 | agent-manager-savoye | #10 | récapitulatif des travaux en cours (tableau de bord) ; pytest 101 |
+| 8 | agent-scrum-master | #61 | README et CONTEXTE-DEV (découpage), socle v0.7.0 ; vérification à blanc : tâche de 30 s suivie après fermeture et réouverture ; 5 passed in 7.78s |
