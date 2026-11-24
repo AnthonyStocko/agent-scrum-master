@@ -1432,16 +1432,25 @@ _QUOTED = re.compile(r'"([^"]*)"')
 _KEY_HEADER = re.compile(r"(?i)^(champs?|cl[ée]s?|keys?|fields?|names?|noms?|codes?|propri[ée]t[ée]s?|attributs?)$")
 
 
-def mutate_feature(text: str, tags: set) -> tuple:
+def _step_text(step: str) -> str:
+    """Texte d'un step sans son mot-clé (Then, And, Alors…) et sans le suffixe _MUT : clé de comparaison."""
+    found = _STEP_LINE.match(step or "")
+    return " ".join((found.group(2) if found else step or "").replace("_MUT", "").split())
+
+
+def mutate_feature(text: str, tags: set, keep: dict = None) -> tuple:
     """
     Copie d'une feature où les attendus des Then des scénarios portant l'un des `tags` sont faussés : seul le
     dernier argument entre guillemets d'un Then (la valeur attendue, pas le nom du champ) est suffixé _MUT ; une
     ligne de données sur deux des tables des Then est modifiée dans ses colonnes de valeurs (nombres +1, booléens
     inversés, texte suffixé _MUT), sans la 1re colonne si son en-tête désigne un champ ou une clé.
+    `keep` {tag: textes de steps} : Then laissés intacts (step et table), ceux dont la mutation a échoué
+    techniquement à un run précédent (valeur servant de critère de recherche : énumération refusée, attente
+    expirée) — leur mutation ne peut jamais donner un échec d'assertion.
     Renvoie (texte muté, {tag: nombre de valeurs faussées}).
     """
-    lines, counts = text.splitlines(), {}
-    current, phase, row, pending_tags, skip_first = None, "given", 0, [], False
+    lines, counts, keep = text.splitlines(), {}, keep or {}
+    current, phase, row, pending_tags, skip_first, frozen = None, "given", 0, [], False, False
     for i, line in enumerate(lines):
         if line.strip().startswith("@"):
             pending_tags += line.split()
@@ -1456,14 +1465,15 @@ def mutate_feature(text: str, tags: set) -> tuple:
         step = _STEP_LINE.match(line)
         if step:
             phase, row = _PHASES.get(step.group(1).lower(), phase), 0
-            if current and phase == "then":
+            frozen = bool(current) and phase == "then" and _step_text(line) in keep.get(current, ())
+            if current and phase == "then" and not frozen:
                 quoted = list(_QUOTED.finditer(line))
                 if quoted:
                     last = quoted[-1]
                     lines[i] = f'{line[:last.start()]}"{last.group(1)}_MUT"{line[last.end():]}'
                     counts[current] = counts.get(current, 0) + 1
             continue
-        if current and phase == "then" and line.strip().startswith("|"):
+        if current and phase == "then" and not frozen and line.strip().startswith("|"):
             row += 1
             cells = line.split("|")
             if row == 1:
@@ -1517,6 +1527,31 @@ def mutation_copies(worktree: str, rels, tags) -> tuple:
 
 
 PASSES_STILL = "passe encore"
+MUTATION_ONLY_CRITERIA = ("mutation non concluante : chaque Then muté échoue techniquement (valeurs servant de "
+                          "critères de recherche, pas d'attendus) — ajouter un Then qui compare un attendu")
+
+
+def mutation_retries() -> int:
+    """CUCUMBER_VERIFY_MUTATION_RETRIES (défaut 2) : reprises de la mutation sans les Then à critère ; 0 : aucune."""
+    try:
+        return max(0, int(os.getenv("CUCUMBER_VERIFY_MUTATION_RETRIES", "").strip() or 2))
+    except ValueError:
+        return 2
+
+
+def technical_then_failures(results: dict, key_of: dict, tags, levels: dict) -> dict:
+    """
+    {tag: texte du step} des scénarios dont la mutation n'a pas conclu parce qu'un Then muté a échoué
+    techniquement (exception autre qu'une assertion) : ce Then sera laissé intact à la reprise.
+    """
+    out = {}
+    for tag in tags:
+        result = results.get(key_of.get(tag, ("", ""))) or {}
+        if levels[tag].get("mutation", ("",))[0] == "nv" and result.get("statut") == "echoue" \
+                and result.get("phase") == "then" and result.get("nature", "assertion") != "assertion" \
+                and result.get("step"):
+            out[tag] = _step_text(result["step"])
+    return out
 NO_VALUE_TO_MUTATE = "assertion sans valeur à vérifier en revue"
 
 
@@ -1743,6 +1778,40 @@ def verify_lot(mode: str, worktree: str, base: str, build_fn, files: list, scena
                 levels[tag]["mutation"] = ("nv", mutation_stop) if mutation_stop else \
                     _level(mutation["resultats"].get(key_of.get(tag, ("", ""))), True) \
                     if mutation["ok"] else ("nv", mutation["message"])
+            # Reprise : un Then muté qui échoue techniquement (énumération refusée par le serveur, attente expirée)
+            # porte un critère de recherche, pas un attendu. Il est laissé intact et la mutation rejouée sur les Then
+            # suivants, au plus CUCUMBER_VERIFY_MUTATION_RETRIES fois (défaut 2).
+            keep, attempt = {}, 0
+            while not mutation_stop and mutation["ok"] and attempt < mutation_retries():
+                retry = technical_then_failures(mutation["resultats"], key_of, to_run, levels)
+                if not retry:
+                    break
+                attempt += 1
+                for tag, step in retry.items():
+                    keep.setdefault(tag, set()).add(step)
+                mutated, counts = {}, {}
+                for rel in {key_of[t][0] for t in retry if t in key_of}:
+                    text, mutations = mutate_feature(_read_text_file(os.path.join(worktree, *rel.split("/"))),
+                                                     set(retry), keep)
+                    mutated[rel] = text
+                    counts.update(mutations)
+                to_run = [t for t in retry if counts.get(t)]
+                for tag in retry:
+                    if not counts.get(tag):
+                        levels[tag]["mutation"] = ("nv", f"{MUTATION_ONLY_CRITERIA} ({levels[tag]['mutation'][1]})")
+                if not to_run:
+                    break
+                mutation = run_tags(mode, worktree, base, build_fn, expression(to_run),
+                                    os.getenv("CUCUMBER_VERIFY_ENV", "").strip(), mutated,
+                                    f"{label}-mutation-{attempt + 1}", sources)
+                mutation_init, mutation_stop = judged(mutation)
+                builds.append({"execution": f"mutation (reprise {attempt}, Then à critère laissés intacts)",
+                               "build": mutation["build"], "message": mutation["message"],
+                               **({"init": mutation_init} if mutation_init else {}), **_copied_info(mutation)})
+                for tag in to_run:
+                    levels[tag]["mutation"] = ("nv", mutation_stop) if mutation_stop else \
+                        _level(mutation["resultats"].get(key_of.get(tag, ("", ""))), True) \
+                        if mutation["ok"] else ("nv", mutation["message"])
     executed = None
     if os.getenv("CUCUMBER_JACOCO", "").strip() == "1" and client["ok"]:
         # Couverture du code spécifique : jacoco.exec de l'environnement client (artefact Jenkins ou dump local)
