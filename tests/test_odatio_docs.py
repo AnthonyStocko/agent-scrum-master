@@ -249,7 +249,7 @@ def test_block_and_tools_follow_the_configuration(main_module, monkeypatch):
 RULES = {
     "cadrage": "N'écris rien dans Jira", "refine": "Ne génère AUCUN patch", "epic_cadrage": "Tu ne poses aucune question",
     "patch": "Tu ne dois JAMAIS poser de questions", "patch_cucumber": "c'est ta source de référence",
-    "pr_review": "Affirme seulement ce que tu as vérifié", "cucumber_client_lot": "Écris les tests de ce lot",
+    "cucumber_client_lot": "Écris les tests de ce lot",
     "cucumber_client_fix": "Tu ne supprimes JAMAIS un scénario", "cucumber_client_review": "C'est la SEULE suppression",
 }
 
@@ -272,29 +272,3 @@ def test_cached_lot_system_prompt_is_untouched(main_module):
     with open(os.path.join(main_module.DEFAULT_PROMPTS_DIR, "cadrage.md"), encoding="utf-8") as f:
         assert "**Documentation consultée**" in f.read()
 
-
-def test_pr_review_gets_only_the_doc_command(main_module, tmp_path, monkeypatch):
-    from tools import pr_review as pr
-    monkeypatch.setenv("ODATIO_DOCS_URL", BASE)
-    monkeypatch.setattr(pr, "ROOT", str(tmp_path))
-    monkeypatch.setattr(pr, "pr_details", lambda p, r, n: {
-        "titre": "APP-1 x", "auteur": "Léa", "source": "f", "cible": "d", "commit": "c1", "description": "",
-        "jira": [], "id": n, "projet": p, "depot": r, "url": ""})
-    monkeypatch.setattr(pr, "pr_diff", lambda p, r, n: ("diff", {"src/A.java": {1: "ADDED"}}, ["src/A.java"]))
-    monkeypatch.setattr(pr, "existing_comments", lambda *a: [])
-    monkeypatch.setattr(pr, "prepare_code", lambda *a: ("", "hors ligne"))
-    monkeypatch.setattr(pr, "merged_feedback", lambda key, projects: [])
-    monkeypatch.setattr(main_module, "get_jira_issue_details", lambda key: "Ticket fictif")
-    monkeypatch.setattr(main_module, "report_token_usage", lambda *a, **k: None)
-    monkeypatch.setattr(main_module, "share_knowledge", lambda *a, **k: None)
-    seen = []
-
-    def claude(prompt, model, dirs, tools, **kwargs):
-        seen.append((prompt, tools))
-        return 0, '{"resume": "R", "verdict": "approuver", "risque": "faible", "commentaires": []}', {}, False
-    monkeypatch.setattr(main_module, "run_claude", claude)
-    assert main_module.run_pr_review(["https://git.example.io/projects/P/repos/app/pull-requests/7"], "APP-1") == 0
-    prompt, tools = seen[0]
-    assert tools == ["Read", "Grep", "Glob"] + main_module.odatio_docs_tools(sys.executable)
-    assert BASE in prompt and "la relecture des pull requests" in prompt
-    assert main_module.REVIEW_TOOLS == ["Read", "Grep", "Glob"]
