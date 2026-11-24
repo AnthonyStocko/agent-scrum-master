@@ -97,28 +97,6 @@ def _reseau_coupe(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _delivery_compile_stub(request, monkeypatch):
-    """
-    Dépôts fictifs des tests (sans pom ni Maven) : le contrôle de compilation des livraisons
-    (cucumber_tools.require_compiled) est simulé réussi, sauf pour les tests marqués real_compile qui le vérifient.
-    """
-    if request.node.get_closest_marker("real_compile"):
-        return
-    from tools import cucumber_tools
-    monkeypatch.setattr(cucumber_tools, "require_compiled", lambda worktree, revisions: {"version": "", "arbre": ""})
-
-
-@pytest.fixture(autouse=True)
-def _no_standard_version_task(request, monkeypatch):
-    """
-    Tests de l'IHM : la tâche de fond de détection de la version du Standard (Bitbucket, Jenkins) n'est jamais
-    lancée pour de vrai ; ses propres tests (test_standard_version_task.py) appellent run() directement.
-    """
-    from tools import standard_version_task
-    monkeypatch.setattr(standard_version_task, "start", lambda *args, **kwargs: False)
-
-
-@pytest.fixture(autouse=True)
 def _isolated_knowledge(tmp_path, monkeypatch):
     """
     Connaissances partagées des tests dans un répertoire temporaire : jamais le vrai répertoire partagé
@@ -146,8 +124,6 @@ def _isolated_knowledge(tmp_path, monkeypatch):
     monkeypatch.setenv("CUCUMBER_CLEANUP_PROOF", "0")
     monkeypatch.setenv("ESTIMATION_SETTINGS_FILE", str(tmp_path / "estimation_projets.json"))
     monkeypatch.setenv("CUCUMBER_SOURCE_VERSION_CHECK", "0")
-    from tools import cucumber_cost
-    monkeypatch.setattr(cucumber_cost, "SESSIONS_FILE", str(tmp_path / "sessions_cout.json"))
     monkeypatch.setattr(knowledge_tools, "OUTBOX_DIR", str(tmp_path / "knowledge_outbox"))
     monkeypatch.setattr(knowledge_tools, "INDEX_CACHE", str(tmp_path / "knowledge_index.json"))
     original = dotenv.load_dotenv

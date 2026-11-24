@@ -13,7 +13,8 @@ from datetime import datetime
 import requests
 
 from agent_socle import publication
-from tools import assistant, cucumber_lock
+from agent_socle import verrou
+from tools import assistant
 from agent_socle import livraisons
 from agent_socle.jenkins_tools import recent_builds
 from agent_socle.secret_tools import mask_secrets
@@ -112,8 +113,8 @@ def cucumber() -> str:
         return "Aucun client Cucumber dans l'agent Scrum Master."
     lignes = []
     for client in clients:
-        detenteur = cucumber_lock.holder(client)
-        lignes.append(f"- {client} : {cucumber_lock.describe(detenteur) if detenteur else 'aucune génération en cours'}")
+        detenteur = verrou.holder(client)
+        lignes.append(f"- {client} : {verrou.describe(detenteur) if detenteur else 'aucune génération en cours'}")
     jobs = [f"{n} = {os.getenv(n)}" for n in JOBS if os.getenv(n, "").strip()]
     return _masque("Cucumber dans l'agent Scrum Master :\n" + "\n".join(lignes)
                    + ("\nJobs Jenkins : " + ", ".join(jobs) if jobs else "\nAucun job Jenkins configuré."))
