@@ -140,4 +140,4 @@ lecture par chemin via `AGENT_DATA_DIR`/dépôt d'origine à traiter dans la pha
 |---|---|---|---|
 | 0 | agent-scrum-master | #52 | cartographie ; 6 dépôts privés créés et clonés sous `C:\` ; pytest 1 053 passés |
 | 1 | agent-socle | #1 | socle v0.1.0 (tag) : 22 modules + `git_tools`, `horodatage`, `chemins` ; 140 tests passés |
-| 1 | agent-scrum-master | #53 | utilise `agent_socle` ; 11 fichiers de tests partis au socle ; pytest : PYTEST_P1 |
+| 1 | agent-scrum-master | #53 | utilise `agent_socle` ; 11 fichiers de tests partis au socle ; pytest 914 passés + 139 au socle = 1 053 (référence), 0 échec |
