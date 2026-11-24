@@ -137,6 +137,9 @@ lecture par chemin via `AGENT_DATA_DIR`/dépôt d'origine à traiter dans la pha
 | Fonctions de `main.py`/`app.py` pour le socle (§3) | extraites en phase 3, avec le premier agent qui les utilise ; `jira_tools.update_jira_section` → Intégration en phase 4 |
 | Chemins des CLI lancées par Claude | `main.py` : `tools/<module>.py` → `<module>.__file__` (fichier du socle) ; seul le chemin change |
 | Tests liés aux documents de l'application (`.env.example`, `README.md`, `.env`) | dans le socle, lus sous `chemins.DATA_DIR` (mêmes fichiers) |
+| Socle des CLI et des IHM (phase 3) | `agent_socle.cli` : fonctions de `main.py` communes aux étapes (`run_claude`, `render_prompt`, `report_token_usage`, doc ODATiO, `share_knowledge`…), importées par chaque `main.py` sous le même nom ; prompts cherchés dans `PROMPTS_DIR`, puis `prompts/` de l'agent (`cli.DEFAULT_PROMPTS_DIR`), puis `agent_socle/prompts` (`token_saving_rules`, `odatio_docs`, `db_access`) ; `agent_socle.ihm` : `run_main_step` et journaux, chemins lus à chaque appel (`AGENT_JOURNAL_PATH`, `AGENT_RUN_LOGS_DIR`, défaut sous `AGENT_DATA_DIR`) |
+| Délégation (phase 3) | `cli.deleguer(nom, sys.argv[1:])` : `main.py` de `AGENT_<NOM>_DIR` (défaut : `agent-<nom>` à côté de `AGENT_DATA_DIR`) ; `--step review-pr` → agent-revue-pr ; page « Revue de PR » → lien vers 8508 (`AGENT_REVUE_PR_URL`) |
+| Revue de PR (phase 3) | `REVIEW_TOOLS` copié (aussi utilisé par l'Assistant) ; `odatio-specific-code-conventions-dev.md` reste à la racine d'agent-scrum-master (aussi lu par le patch, Lancement) et lu sous `AGENT_DATA_DIR` ; base REST de `pr_review` → `agent_socle.bitbucket_rest` (Cucumber : `cucumber_repo_setup`, PR Java 21) |
 | Référence pytest (main 4e6fba8) | 1 053 passés, 1 ignoré, 0 échec (les 3 échecs connus ne se reproduisent plus) ; suite complète ≈ 30 min |
 
 ## 8. Journal d'avancement
@@ -149,3 +152,6 @@ lecture par chemin via `AGENT_DATA_DIR`/dépôt d'origine à traiter dans la pha
 | 2 | agent-projets | #1 | API 8512, IHM 8504 (registre + tests de connexion), CLI ; 7 tests |
 | 2 | agent-scrum-master | #54 | socle v0.2.0, tests de connexion déplacés (lien vers 8504) ; pytest 912 passés + 141 au socle = 1 053 (référence), 0 échec |
 | 1 | agent-scrum-master | #53 | utilise `agent_socle` ; 11 fichiers de tests partis au socle ; pytest 914 passés + 139 au socle = 1 053 (référence), 0 échec |
+| 3 | agent-socle | #3 | v0.3.0 (tag) : `cli`, `ihm`, `bitbucket_rest`, prompts communs ; 156 tests |
+| 3 | agent-revue-pr | #1 | `pr_review`, étape `review-pr`, page Revue de PR (8508) ; 16 tests |
+| 3 | agent-scrum-master | #56 | socle v0.3.0, `review-pr` délégué à agent-revue-pr, page Revue → lien 8508 ; pytest 899 passés + 13 dans agent-revue-pr = 912, 0 échec (suite 15 min) |

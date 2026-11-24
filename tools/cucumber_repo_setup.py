@@ -16,7 +16,7 @@ import re
 
 import requests
 
-from tools import pr_review
+from agent_socle import bitbucket_rest
 
 LIBRARY_GROUP, LIBRARY_ARTIFACT = "a-sis", "Cucumber"
 # Dépendances communes aux projets clients (mêmes que le Cucumber Standard) ; versions par défaut
@@ -248,15 +248,15 @@ def write_token_missing(slug: str = "<client>-cucumber") -> str:
 
 def _call(method: str, path: str, write: bool = False, **kwargs):
     """Appel REST Bitbucket : jeton de lecture, ou jeton d'écriture (`write`) pour la création et ses contrôles."""
-    if not pr_review.configured():
+    if not bitbucket_rest.configured():
         raise RepoError("BITBUCKET_URL ou BITBUCKET_HTTP_TOKEN non renseigné (onglet Configuration)")
-    headers = {**pr_review._headers(), "Content-Type": "application/json"}
+    headers = {**bitbucket_rest._headers(), "Content-Type": "application/json"}
     if write:
         if not write_token():
             raise RepoError(write_token_missing())
         headers["Authorization"] = f"Bearer {write_token()}"
     try:
-        return requests.request(method, f"{pr_review.base_url()}{path}", headers=headers, timeout=30, **kwargs)
+        return requests.request(method, f"{bitbucket_rest.base_url()}{path}", headers=headers, timeout=30, **kwargs)
     except requests.RequestException as e:
         raise RepoError(f"Bitbucket injoignable : {type(e).__name__}") from e
 
