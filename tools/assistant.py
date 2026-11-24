@@ -12,7 +12,7 @@ import json
 import os
 from datetime import datetime
 
-from tools.secret_tools import mask_secrets
+from agent_socle.secret_tools import mask_secrets
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TMP = os.path.join(WORKSPACE_DIR, ".tmp")

@@ -18,7 +18,8 @@ connaissances partagées (share_bilan).
 import os
 from datetime import datetime
 
-from tools import cucumber_decisions, cucumber_delivery, cucumber_diagnostic, cucumber_import, knowledge_tools
+from tools import cucumber_decisions, cucumber_delivery, cucumber_diagnostic, cucumber_import
+from agent_socle import knowledge_tools
 from tools.cucumber_a_revoir import A_REVOIR_FILE, CAUSES, UNPROVEN
 from tools.cucumber_tools import (CONSTAT_TYPES, _git, _read_json, _write_json, _write_text, cache_dir, patch_path,
                                   worktree_dir,

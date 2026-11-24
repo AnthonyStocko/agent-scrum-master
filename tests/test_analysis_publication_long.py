@@ -6,7 +6,8 @@ from datetime import datetime
 import pytest
 
 from tools import analysis_publication as ap
-from tools import integration_tools, jira_tools
+from tools import integration_tools
+from agent_socle import jira_tools
 
 
 class FakeJira:

@@ -21,7 +21,8 @@ job (identifiants) n'y sont jamais écrits.
 import os
 from datetime import datetime
 
-from tools import cucumber_checks, cucumber_job, cucumber_modules, cucumber_profile, jenkins_tools
+from tools import cucumber_checks, cucumber_job, cucumber_modules, cucumber_profile
+from agent_socle import jenkins_tools
 from tools.cucumber_tools import _git, java_package_segment, load_state, rev_parse, save_state
 
 DEFAULT_TIMEOUT = 3600

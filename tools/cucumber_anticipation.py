@@ -332,7 +332,7 @@ def check_studio(components: list, resolver: Resolver) -> dict:
 
 def studio_components(schema: str, column: str = "coalesce(nullif(customized_xml, ''), nullif(merged_xml, ''), original_xml)") -> list:
     """Dernière version de chaque processus personnalisé de la base des tests (profil « cucumber » de db_tools)."""
-    from tools import db_tools
+    from agent_socle import db_tools
     previous = db_tools.set_profile("cucumber")
     try:
         with db_tools.readonly_connection(schema) as conn:
@@ -463,7 +463,7 @@ def main(argv=None) -> int:
     except ImportError:  # pragma: no cover
         pass
     from tools import client_version, cucumber_copied_config, cucumber_profile, cucumber_tools
-    from tools.bitbucket_code import standard
+    from agent_socle.bitbucket_code import standard
     from tools.cucumber_jobs import _std_candidates
     profile = cucumber_profile.effective_profile(cucumber_profile.load_profile(args.client))
     schema = args.schema or cucumber_copied_config.test_schema(profile) or os.getenv("CUCUMBER_DB_SCHEMA", "")

@@ -13,26 +13,50 @@ import logging
 
 from dotenv import dotenv_values, load_dotenv
 
-from tools import auth_tools, config_commune, env_tools, lien_manager
+from tools import config_commune
+from agent_socle import auth_tools, env_tools, lien_manager
 from tools import client_version, cucumber_delivery, cucumber_incidents, cucumber_init_fix, cucumber_library_upgrade, cucumber_lock, cucumber_modules, cucumber_test_data, standard_version, standard_version_task
-from tools import (cucumber_a_revoir, cucumber_java21, cucumber_simple, cucumber_audit, cucumber_bilan, cucumber_checks, cucumber_coverage, cucumber_job,
-                   cucumber_decisions, cucumber_detection, cucumber_environment, cucumber_failures, cucumber_import,
-                   cucumber_preflight,
-                   cucumber_init_data, cucumber_initializers, cucumber_journey, cucumber_profile, cucumber_run,
-                   cucumber_links, cucumber_results, cucumber_studio, cucumber_testability, cucumber_tools,
-                   cucumber_verify, integration_tools, jenkins_tools, knowledge_tools)
+from tools import (cucumber_a_revoir,
+    cucumber_java21,
+    cucumber_simple,
+    cucumber_audit,
+    cucumber_bilan,
+    cucumber_checks,
+    cucumber_coverage,
+    cucumber_job,
+    cucumber_decisions,
+    cucumber_detection,
+    cucumber_environment,
+    cucumber_failures,
+    cucumber_import,
+    cucumber_preflight,
+    cucumber_init_data,
+    cucumber_initializers,
+    cucumber_journey,
+    cucumber_profile,
+    cucumber_run,
+    cucumber_links,
+    cucumber_results,
+    cucumber_studio,
+    cucumber_testability,
+    cucumber_tools,
+    cucumber_verify,
+    integration_tools)
+from agent_socle import jenkins_tools, knowledge_tools
 from tools import analysis_publication
 from tools.epic_tools import draft_tasks, load_epic_manifest, missing_analyses, task_analysis, task_file
-from tools.jira_tools import (
+from agent_socle.jira_tools import (
     JiraSearchError, fetch_tickets_data, fetch_tickets_with_epic_context, get_jira_issue_summary, parse_issue_keys,
     std_only_projects,
 )
-from tools.db_tools import DB_TYPES, test_connection
-from tools import pr_review, cucumber_overview, cucumber_set_aside, assistant, db_restore, skills
-from tools import mcp_servers, ui_timer, cucumber_env_diagnosis, cucumber_copied_config
-from tools.jenkins_tools import trigger_cucumber_job
-from tools import jenkins_tools
-from tools.memory_tools import (
+from agent_socle.db_tools import DB_TYPES, test_connection
+from tools import pr_review, cucumber_overview, cucumber_set_aside, assistant, db_restore
+from agent_socle import skills
+from tools import cucumber_env_diagnosis, cucumber_copied_config
+from agent_socle import mcp_servers, ui_timer
+from agent_socle.jenkins_tools import trigger_cucumber_job
+from agent_socle import jenkins_tools
+from agent_socle.memory_tools import (
     find_similar_tickets, get_project_lessons, load_ticket_memory, record_manual_edit,
     restore_cadrage_file, should_open_revision,
     get_all_memories, clear_memory, delete_ticket_memory, import_existing_deliverables,
@@ -5482,7 +5506,7 @@ if PAGE == "configuration":
     if os.getenv("GROUNDCOVER_API_KEY", "").strip():
         if st.button("Tester groundcover", icon=":material/lan:", key="test_groundcover"):
             from datetime import datetime as _dt, timedelta as _td, timezone as _tz
-            from tools import groundcover_tools
+            from agent_socle import groundcover_tools
             try:
                 now = _dt.now(_tz.utc)
                 with st.spinner("Lecture des logs groundcover…"):

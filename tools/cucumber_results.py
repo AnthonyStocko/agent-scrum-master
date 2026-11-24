@@ -120,7 +120,7 @@ def record_preparation(client_name: str, ok: bool, message: str, files: list = (
 
 def share_preparation(client_name: str, preparation: dict) -> dict:
     """Résultat de la préparation des données de test déposé dans les connaissances partagées (jamais bloquant)."""
-    from tools import knowledge_tools
+    from agent_socle import knowledge_tools
     if not knowledge_tools.enabled():
         return {}
     patch = preparation.get("patch") or ""

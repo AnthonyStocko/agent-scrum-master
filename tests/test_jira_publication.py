@@ -9,7 +9,8 @@ from datetime import datetime
 
 import pytest
 
-from tools import analysis_publication, epic_tools, integration_tools, jira_guard, jira_tools
+from tools import analysis_publication, epic_tools, integration_tools
+from agent_socle import jira_guard, jira_tools
 
 
 @pytest.fixture

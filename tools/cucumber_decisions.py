@@ -18,7 +18,8 @@ import os
 import re
 from datetime import datetime
 
-from tools import cucumber_arbitrage, knowledge_tools
+from tools import cucumber_arbitrage
+from agent_socle import knowledge_tools
 from tools.cucumber_a_revoir import DISABLED_COMMENT, PENDING, REALIGNED, expected_kept, scenario_blocks
 from tools.cucumber_diagnostic import temporary_steps
 from tools.cucumber_tools import (_git, _read_json, _read_text_file, _write_json, _write_text, a_revoir_tag,

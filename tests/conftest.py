@@ -75,7 +75,7 @@ def _isolated_knowledge(tmp_path, monkeypatch):
     (AppTest) : ce rechargement ne peut plus remettre le vrai répertoire.
     """
     import dotenv
-    from tools import knowledge_tools
+    from agent_socle import knowledge_tools
     monkeypatch.setenv("AGENT_KNOWLEDGE_DIR", str(tmp_path / "connaissances_partagees"))
     # Groundcover (MCP) jamais actif par le .env du poste : les tests qui en ont besoin l'activent eux-mêmes
     monkeypatch.setenv("GROUNDCOVER_MCP_ENABLED", "0")

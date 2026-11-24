@@ -15,7 +15,7 @@ from tools import cucumber_profile as cp
 from tools import cucumber_run as cr
 from tools import cucumber_tools as ct
 from tools import cucumber_verify as cv
-from tools import jenkins_tools, secret_tools
+from agent_socle import jenkins_tools, secret_tools
 
 BRANCH = "cucumber-agent"
 # Artefact du client détecté dans le pom de son application (choix de la version) : COMPONENT_OWNER / NAME

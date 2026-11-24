@@ -112,7 +112,7 @@ def ticket_keys(client_name: str, worktree: str, rel: str, block: list, specs=()
 
 
 def _fetch_description(key: str) -> str:
-    from tools import jira_tools
+    from agent_socle import jira_tools
     context = jira_tools.get_full_jira_issue_context(key)
     if context.get("error"):
         return ""

@@ -191,7 +191,8 @@ def test_precubing_unreachable_points_to_the_job_arguments_never_to_hard_coded_v
 
 def test_job_argument_values_are_masked_and_refused_in_lot_files(tmp_path, monkeypatch):
     """Adresse d'un service de test et identifiants des arguments du job : masqués, interdits dans les fichiers."""
-    from tools import cucumber_job, secret_tools
+    from tools import cucumber_job
+    from agent_socle import secret_tools
     monkeypatch.setattr(secret_tools, "_RUNTIME_SECRETS", set())
     fake_password = base64.b64encode(b"motdepasse-fictif").decode()
     cucumber_job.register_argline_secrets(

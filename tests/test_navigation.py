@@ -7,7 +7,8 @@ import time
 
 from streamlit.testing.v1 import AppTest
 
-from tools import cucumber_detection, standard_version_task, ui_timer
+from tools import cucumber_detection, standard_version_task
+from agent_socle import ui_timer
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

@@ -401,7 +401,7 @@ def client_no_init_warning(client_name: str) -> str:
     lue par l'agent (profil « cucumber » de la connexion : cible et schéma, sans mot de passe).
     """
     import os
-    from tools import db_tools
+    from agent_socle import db_tools
     from tools.cucumber_tools import cache_dir
     folder = os.path.join(cache_dir(client_name), "verification")
     names = [n for n in os.listdir(folder) if n.endswith("console.txt")] if os.path.isdir(folder) else []

@@ -135,7 +135,7 @@ def host_of(value: str) -> str:
     value = (value or "").strip()
     match = _UNC_HOST.match(value) or _URL_HOST.match(value)
     host = match.group(1).strip() if match else ""
-    from tools import secret_tools
+    from agent_socle import secret_tools
     return secret_tools.mask_secrets(host)[0] if host else ""
 
 

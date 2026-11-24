@@ -11,8 +11,13 @@ import sys
 
 import pytest
 
-from tools import (cucumber_copied_config as cc, cucumber_profile, cucumber_simple, cucumber_test_data, cucumber_tools,
-                   db_restore, jenkins_tools)
+from tools import (cucumber_copied_config as cc,
+    cucumber_profile,
+    cucumber_simple,
+    cucumber_test_data,
+    cucumber_tools,
+    db_restore)
+from agent_socle import jenkins_tools
 
 CLIENT = "acme"
 SCHEMA = "cucumber_customer_1"

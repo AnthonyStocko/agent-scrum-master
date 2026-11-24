@@ -12,9 +12,10 @@ from datetime import datetime
 
 import requests
 
-from tools import analysis_publication, assistant, cucumber_lock, livraisons
-from tools.jenkins_tools import recent_builds
-from tools.secret_tools import mask_secrets
+from tools import analysis_publication, assistant, cucumber_lock
+from agent_socle import livraisons
+from agent_socle.jenkins_tools import recent_builds
+from agent_socle.secret_tools import mask_secrets
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CLE = re.compile(r"^[A-Z][A-Z0-9_]+-\d+$")

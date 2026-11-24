@@ -26,7 +26,7 @@ import re
 from datetime import datetime
 
 from tools import integration_tools
-from tools.jira_tools import update_jira_cadrage
+from agent_socle.jira_tools import update_jira_cadrage
 
 PUBLICATION_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".tmp", "publication")
 DEFAULT_LIMIT = 32767
@@ -293,33 +293,33 @@ class JiraBackend:
     """Accès Jira réel de la publication (tools.jira_tools)."""
 
     def get_description(self, key):
-        from tools.jira_tools import get_jira_description
+        from agent_socle.jira_tools import get_jira_description
         return get_jira_description(key)
 
     def put_description(self, key, doc):
-        from tools.jira_tools import put_jira_description
+        from agent_socle.jira_tools import put_jira_description
         put_jira_description(key, doc)
 
     def list_comments(self, key):
-        from tools.jira_tools import list_jira_comments
+        from agent_socle.jira_tools import list_jira_comments
         return list_jira_comments(key)
 
     def add_comment(self, key, body):
-        from tools.jira_tools import add_jira_comment
+        from agent_socle.jira_tools import add_jira_comment
         return add_jira_comment(key, body)
 
     def update_comment(self, key, comment_id, body):
-        from tools.jira_tools import update_jira_comment
+        from agent_socle.jira_tools import update_jira_comment
         update_jira_comment(key, comment_id, body)
 
     def delete_comment(self, key, comment_id):
-        from tools.jira_tools import delete_jira_comment
+        from agent_socle.jira_tools import delete_jira_comment
         delete_jira_comment(key, comment_id)
 
 
 def _comment_text(body) -> tuple:
     """(marqueur, Markdown) d'un commentaire d'analyse ; ('', '') pour tout autre commentaire."""
-    from tools.jira_tools import _adf_plain_text
+    from agent_socle.jira_tools import _adf_plain_text
     nodes = (body or {}).get("content") or [] if isinstance(body, dict) else []
     if not nodes:
         return "", ""
@@ -372,7 +372,7 @@ def publish_to_jira(key: str, text: str, jira=None, when: datetime = None) -> di
     sinon résumé dans la description et analyse intégrale en commentaire(s). Renvoie {"mode": "description" |
     "commentaires", "taille", "limite", "commentaires", "message"}.
     """
-    from tools.jira_tools import upsert_cadrage_adf
+    from agent_socle.jira_tools import upsert_cadrage_adf
     jira = jira or JiraBackend()
     stops = (integration_tools.SECTION_TITLE,)
     version = (when or datetime.now()).strftime("%d/%m/%Y %H:%M")
@@ -495,7 +495,7 @@ def full_analysis(issue_key: str, jira=None) -> dict:
     if text:
         return {"texte": text, "source": "commentaires",
                 "message": f"analyse lue dans {count} commentaire(s) Jira"}
-    from tools.jira_tools import _extract_adf_text
+    from agent_socle.jira_tools import _extract_adf_text
     description = _extract_adf_text(jira.get_description(issue_key)) or ""
     if SUMMARY_SENTENCE in description:
         raise IncompleteAnalysis(f"La description de {issue_key} ne porte qu'un résumé et aucun commentaire « Analyse "

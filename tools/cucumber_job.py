@@ -24,7 +24,7 @@ from email.utils import parsedate_to_datetime
 
 import requests
 
-from tools import jenkins_tools, secret_tools
+from agent_socle import jenkins_tools, secret_tools
 from tools.cucumber_tools import _git, _read_json, _write_json, cache_dir, git_repos
 
 ROLES = {"branche": "branche du dépôt client lue par le job (branche de travail de l'agent)",

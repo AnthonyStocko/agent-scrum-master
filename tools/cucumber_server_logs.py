@@ -17,7 +17,7 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from tools.cucumber_verify import _LOG_STAMP, _timestamp
-from tools.secret_tools import MASK, mask_secrets
+from agent_socle.secret_tools import MASK, mask_secrets
 
 LOG_FILE = re.compile(r"\.(log|txt|csv|out)(\.[\w.-]+)?(\.gz)?$|\.log\.\d+$", re.I)
 EXTRACT_NAME = "logs-serveur.txt"

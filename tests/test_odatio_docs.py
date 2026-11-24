@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import pytest
 import requests
 
-from tools import odatio_docs as od
+from agent_socle import odatio_docs as od
 
 BASE = "https://docs.exemple.test/doc/produit/development/index.html"
 PREFIX = "https://docs.exemple.test/doc/"
