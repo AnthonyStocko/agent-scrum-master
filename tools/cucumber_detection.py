@@ -44,7 +44,6 @@ FINDINGS = {"absente": "aucune initialisation des données",
 DELIVERABLE = ("initializer", "champ_personnalise", "controle_environnement")
 # Constats qui rendent tous les tests dépendants de l'init
 GLOBAL_FINDINGS = ("absente", "clear", "init_en_echec")
-PROJECT_FILE = "projet.json"
 # Vérification des commits : au plus toutes les 15 min, et seulement quand l'onglet Cucumber est affiché
 DEFAULT_INTERVAL = 900
 _PURGE_STEP = re.compile(r"^INIT- Purge\b")
@@ -86,24 +85,7 @@ def save_project(client_name: str, settings: dict) -> None:
     _write_json(os.path.join(cache_dir(client_name), PROJECT_FILE), settings)
 
 
-def known_projects(cache_root: str) -> dict:
-    """{client: réglages} des projets déjà travaillés (dossier de cache avec réglages, profil ou génération)."""
-    out = {}
-    if not os.path.isdir(cache_root):
-        return out
-    for name in sorted(os.listdir(cache_root)):
-        folder = os.path.join(cache_root, name)
-        if name.startswith(("_", ".")) or not os.path.isdir(folder):
-            continue
-        if not any(os.path.exists(os.path.join(folder, f)) for f in (PROJECT_FILE, "profil.json", "etat.json",
-                                                                      "inventaire.json")):
-            continue
-        settings = _read_json(os.path.join(folder, PROJECT_FILE), {}) or {}
-        if not settings.get("client_repo"):
-            settings["client_repo"] = (_read_json(os.path.join(folder, "inventaire.json"), {}) or {}).get(
-                "depot_client", "")
-        out[name] = settings
-    return out
+from agent_socle.projets import PROJECT_FILE, known_projects  # noqa: E402,F401 — extraits au socle
 
 
 # ---------------------------------------------------------------------------
