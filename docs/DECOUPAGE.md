@@ -149,6 +149,9 @@ lecture par chemin via `AGENT_DATA_DIR`/dépôt d'origine à traiter dans la pha
 | Cucumber (phase 6) | `main.py` et `app.py` d'agent-cucumber : copies élaguées (étapes et pages Cucumber), puis fonctions, constantes et imports inatteignables retirés (gardés s'ils sont lus ou patchés par les tests déplacés) ; agent-scrum-master réduit de même à l'Assistant, Connaissances, Configuration et aux délégations (bloc unique `cli.deleguer` des 4 agents) |
 | Dossier de travail de l'IHM Cucumber (phase 6) | lancée depuis son dépôt, elle se place dans `AGENT_DATA_DIR` ; ses commandes gardent `"main.py"` relatif (les tests reconnaissent les lancements ainsi) : c'est celui d'agent-scrum-master, qui délègue à agent-cucumber |
 | Socle v0.6.0 (phase 6) | `reglages` : valeurs par défaut des réglages Cucumber de la page Configuration et `agent_runs_tests` (réexportés par leurs modules) ; `verrou` : lecture du verrou pour le lecteur du manager (`holder` copié, prise et libération dans agent-cucumber) ; garde `DeliveryBlocked` autour de `main()` : seulement dans agent-cucumber |
+| Manager (phase 7) | worktree `C:gent-manager-savoye-phase7` depuis `origin/main` (branche locale de l'utilisateur intacte) ; repris : assistant, lecture_manager, poller_control (`manager/`), webhook_server.py, mcp_lecture.py, `main.py --step ask`, onglets « Assistant des agents » et « Connaissances partagées » ; liens `?page=` d'agent-scrum-master redirigés vers l'agent du registre (sinon agent-scrum-master renvoie) ; registre modèle : 5 agents (venv d'agent-scrum-master) ; venv du manager : python-dotenv, agent-socle `--no-deps`, pytest (dev) |
+| Assistant des agents (phase 7) | code lu : `AGENT_DATA_DIR` et les dépôts des agents (chemins seuls ; le modèle `assistant` inchangé) |
+| Compte Claude (phase 7) | reste dans le formulaire global `.env` de la Configuration d'agent-scrum-master (règle `CLAUDE_CONFIG_DIR` de tous les agents) : le déplacer découperait le formulaire |
 | Référence pytest (main 4e6fba8) | 1 053 passés, 1 ignoré, 0 échec (les 3 échecs connus ne se reproduisent plus) ; suite complète ≈ 30 min |
 
 ## 8. Journal d'avancement
@@ -173,3 +176,6 @@ lecture par chemin via `AGENT_DATA_DIR`/dépôt d'origine à traiter dans la pha
 | 6 | agent-socle | #6 | v0.6.0 (tag) : `reglages`, `verrou` ; tests qui importaient main sur le socle seul ; 160 tests |
 | 6 | agent-cucumber | #1 | 74 modules, prompts Cucumber, jenkins/, 84 fichiers de tests ; main.py et app.py élagués ; 839 passés, 1 ignoré |
 | 6 | agent-scrum-master | #59 | socle v0.6.0 ; reste Assistant, Connaissances, Configuration et délégations (main.py 196 lignes, app.py 1 274) ; pytest 17 passés, 0 échec |
+| 7 | agent-manager-savoye | #9 | Assistant des agents, Connaissances, webhook, poller, lecteur MCP, CLI ask, redirection des liens, registre ; pytest 100, unittest 90 |
+| 7 | agent-socle | #7 | tests de lien_manager déplacés ; 162 tests |
+| 7 | agent-scrum-master | #60 | Assistant, Connaissances, webhook, poller, lecteur MCP partis au manager ; `ask` délégué ; reste Configuration et compatibilité ; pytest 5 passés |
