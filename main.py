@@ -74,7 +74,6 @@ from tools import (client_version,
     cucumber_verify,
     cucumber_versions,
     cucumber_wait_steps,
-    integration_tools,
     assistant,
     db_restore)
 from agent_socle import (bitbucket_std,
@@ -119,7 +118,17 @@ from agent_socle.cli import (
     ODATIO_DOCS_CLI,
     ODATIO_DOCS_USAGE,
     _USAGE_LIMIT,
-    _USAGE_RESET)
+    _USAGE_RESET,
+    CLAUDE_MODEL_ENV,
+    CLAUDE_EFFORT_ENV,
+    ODATIO_DOCS_STEPS,
+    format_jira_context,
+    consult_knowledge,
+    produced,
+    flush_knowledge_outbox,
+    ticket_client,
+    print_draft_status,
+    check_jira_untouched)
 from agent_socle.jira_tools import (
     fetch_application_tickets, find_jira_issue_by_summary, get_epic_children, get_full_jira_issue_context,
     get_jira_issue_details,
@@ -161,73 +170,12 @@ def _safe_memory(action, *args, **kwargs) -> bool:
 # ---------------------------------------------------------------------------
 
 
-# Variable .env du modèle Claude par étape (vide = modèle par défaut de Claude Code)
-CLAUDE_MODEL_ENV = {
-    "cadrage": "CLAUDE_MODEL_CADRAGE",
-    "epic-cadrage": "CLAUDE_MODEL_CADRAGE",
-    "refine": "CLAUDE_MODEL_REFINE",
-    "patch": "CLAUDE_MODEL_PATCH",
-    "generate-cucumber-postmerge": "CLAUDE_MODEL_POSTMERGE",
-    "besoin": "CLAUDE_MODEL_BESOIN",
-    "cadrage-reponses": "CLAUDE_MODEL_REFINE",
-    "generate-cucumber-client": "CLAUDE_MODEL_CUCUMBER",
-}
-
-# Variable .env de l'effort Claude par étape (vide = réglage de Claude Code sur le poste)
-CLAUDE_EFFORT_ENV = {step: name.replace("CLAUDE_MODEL_", "CLAUDE_EFFORT_") for step, name in CLAUDE_MODEL_ENV.items()}
-
-
 # ---------------------------------------------------------------------------
 # Modèles de prompts (prompts/*.md, personnalisables via PROMPTS_DIR)
 # ---------------------------------------------------------------------------
 
 DEFAULT_PROMPTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prompts")
 cli.DEFAULT_PROMPTS_DIR = DEFAULT_PROMPTS_DIR  # puis les modèles communs du socle
-
-
-ODATIO_DOCS_STEPS = {"cadrage": "analyse", "refine": "analyse", "cadrage-reponses": "analyse",
-                     "epic-cadrage": "analyse", "patch": "patch"}
-
-
-def format_jira_context(jira_context: dict, max_chars: int) -> str:
-    """
-    Contexte Jira déjà récupéré par main.py (description, Épopée, COST), injecté dans le prompt
-    de cadrage. La taille est plafonnée et chaque troncature est signalée à l'agent.
-    """
-    if not jira_context or max_chars <= 0:
-        return ""
-
-    def clip(label: str, text: str, budget: int) -> str:
-        text = (text or "").strip()
-        if len(text) <= budget:
-            return text
-        return text[:budget].rstrip() + f"\n[... {label} TRONQUÉ(E) : {len(text) - budget} caractères non affichés ...]"
-
-    epic = jira_context.get("epic") or {}
-    costs = jira_context.get("costs") or []
-    desc_budget, epic_budget = max_chars // 2, max_chars // 5
-    cost_budget = max(max_chars - desc_budget - epic_budget, 0) // max(len(costs), 1)
-
-    parts = [
-        f"=== CONTEXTE JIRA DU TICKET {jira_context.get('issue_key', '')} (déjà récupéré) ===",
-        f"Titre : {jira_context.get('summary', '')}",
-        f"Composants : {', '.join(jira_context.get('components', [])) or 'aucun'}",
-        "## Description",
-        clip("Description", jira_context.get("description", ""), desc_budget) or "(vide)",
-    ]
-    if epic:
-        parts += [f"## Épopée {epic.get('key', '')} — {epic.get('summary', '')}",
-                  clip("Épopée", epic.get("description", ""), epic_budget) or "(description vide)"]
-    else:
-        parts.append("## Épopée : aucune trouvée par l'API")
-    if costs:
-        for cost in costs:
-            parts += [f"## COST {cost.get('key', '')} — {cost.get('summary', '')}",
-                      clip(f"COST {cost.get('key', '')}", cost.get("description", ""), cost_budget) or "(description vide)"]
-    else:
-        parts.append("## COST : aucun ticket lié trouvé par l'API")
-    parts.append("=== FIN CONTEXTE JIRA ===")
-    return "\n".join(parts)
 
 
 def cucumber_budget() -> str:
@@ -285,40 +233,6 @@ def publish_release_note(issue_key: str, note_path: str, run_started_at: float) 
 def share_file(path: str, projet: str, doc_type: str, sujet: str, **fields) -> dict:
     """share_knowledge du contenu d'un fichier produit ({} s'il est absent)."""
     return share_knowledge(_read_text(path), projet, doc_type, sujet, **fields) if path else {}
-
-
-def consult_knowledge(projet: str, **criteria) -> dict:
-    """
-    Consultation des connaissances partagées avant une analyse (knowledge_tools.consult) : message et documents
-    retenus affichés ; {"bloc": "", "documents": []} si la fonction est désactivée. Jamais bloquant.
-    """
-    if not knowledge_tools.enabled():
-        return {"bloc": "", "documents": []}
-    shared = knowledge_tools.consult(projet, **criteria)
-    print(f"[CONNAISSANCES] {shared['message']}" + "".join(f"\n    {p}" for p in shared["documents"]))
-    return shared
-
-
-def produced(path: str, since: float) -> bool:
-    """Le fichier a-t-il été écrit pendant cette exécution ?"""
-    return bool(path) and os.path.exists(path) and os.path.getmtime(path) >= since
-
-
-def flush_knowledge_outbox() -> None:
-    """Au démarrage : dépose les documents restés en file locale (partage indisponible lors d'un dépôt)."""
-    if not (knowledge_tools.enabled() and knowledge_tools.outbox_count()):
-        return
-    result = knowledge_tools.flush_outbox()
-    for message in result["messages"]:
-        print(f"[CONNAISSANCES] {message}")
-    print(f"[CONNAISSANCES] File locale : {result['deposes']} document(s) déposé(s), {result['restants']} en attente.")
-
-
-def ticket_client(args, project: str) -> str:
-    """Client d'une analyse de ticket, déduit du dépôt client ('' pour un projet du socle seul)."""
-    if project.upper() in std_only_projects() or args.client_repo == "STD_ONLY":
-        return ""
-    return cucumber_tools.client_name_from_repo(args.client_repo or os.getenv("BITBUCKET_CLIENT_REPO_PATH", ""))
 
 
 def epic_markdown(epic_key: str) -> str:
@@ -1308,6 +1222,9 @@ def main():
     if args.step == "review-pr":
         # Revue de PR : agent-revue-pr (AGENT_REVUE_PR_DIR), mêmes arguments
         sys.exit(cli.deleguer("revue-pr", sys.argv[1:]))
+    if args.step in ("besoin", "cadrage-reponses"):
+        # Intégration : agent-integration (AGENT_INTEGRATION_DIR), mêmes arguments
+        sys.exit(cli.deleguer("integration", sys.argv[1:]))
     if args.step == "ask":
         sys.exit(run_assistant(args.question, args.answer_file))
     if args.step == "restore-config":
@@ -1487,7 +1404,7 @@ def main():
 
     # Besoin initial Jira : sert à retrouver les tickets similaires et à capitaliser
     jira_context = {} if is_cucumber_client else get_full_jira_issue_context(
-        target_issue, exclude_sections=(integration_tools.SECTION_TITLE,) if is_besoin else ())
+        target_issue, exclude_sections=())
     if jira_context.get("error"):
         print(f"[MÉMOIRE] Contexte Jira indisponible : {jira_context['error']}")
         jira_context = {}
@@ -1554,7 +1471,7 @@ def main():
             f"Le contexte Jira du ticket {target_issue} (description, Épopée, COST) est fourni ci-dessous : n'interroge Jira "
             f"QUE si une information manque (Épopée ou COST absents alors qu'attendus, texte signalé TRONQUÉ). Dans ce cas, "
             f"récupère uniquement l'élément manquant, par exemple :\n"
-            f"   \"{python_exe}\" -c \"from tools.jira_tools import get_jira_issue_details; print(get_jira_issue_details('<CLÉ>'))\"\n"
+            f"   \"{python_exe}\" -c \"from agent_socle.jira_tools import get_jira_issue_details; print(get_jira_issue_details('<CLÉ>'))\"\n"
             f"{jira_context_block}"
         )
     else:
@@ -1602,15 +1519,7 @@ def main():
         prompt = render_prompt("refine", **prompt_values, feedback=args.feedback)
     if args.step in ("cadrage", "refine", "epic-cadrage") and not is_cucumber_client:
         prompt += estimation_prompt(target_project, target_issue, jira_context, epic=args.step == "epic-cadrage")
-    if is_besoin:
-        besoin_output = integration_tools.agent_output_path(target_issue)
-        previous_besoin = integration_tools.load_state(target_issue)
-        qa_block = integration_tools.previous_qa_block(previous_besoin)
-        app_block = build_application_block(target_issue, args.application)
-        prompt = render_prompt("besoin", **prompt_values, output_file=besoin_output,
-                               previous_qa_block=f"{qa_block}\n" if qa_block else "",
-                               application_block=f"{app_block}\n" if app_block else "")
-    elif is_cucumber_client and args.simple_depot:
+    if is_cucumber_client and args.simple_depot:
         # Étape 2 de l'onglet simplifié : le dépôt <client>-cucumber peut ne pas encore exister
         sys.exit(run_simple_depot(args.client_name, args.client_repo or os.getenv("BITBUCKET_CLIENT_REPO_PATH", ""),
                                   local_client_repo, args.simple_depot, args.cucumber_base_branch))
@@ -1654,16 +1563,6 @@ def main():
         sys.exit(run_cucumber_client(args, target_issue, local_client_repo, local_std_repo, local_cucumber_std_repo,
                                      odatio_version, cucumber_repo_dir, token_saving_rules, python_exe,
                                      workspace_dir))
-    elif is_cadrage_answers:
-        integration_state = integration_tools.load_state(target_issue)
-        if not os.path.exists(cadrage_file):
-            print(f"❌ Aucun cadrage '{cadrage_file}' à compléter : lancez d'abord l'analyse du ticket.")
-            sys.exit(2)
-        if not integration_tools.answered(integration_state):
-            print(f"❌ Aucune réponse enregistrée pour {target_issue} (onglet Intégration).")
-            sys.exit(2)
-        prompt = render_prompt("cadrage_reponses", **prompt_values, cadrage_file=cadrage_file,
-                               integration_block=integration_tools.cadrage_answers_block(integration_state))
     elif args.step == "patch":
         prompt = render_prompt("patch_cucumber" if args.generate_cucumber else "patch", **prompt_values)
     elif is_postmerge:
@@ -1798,9 +1697,6 @@ def main():
                             previous_cadrage=cadrage_before_run, updated_cadrage=cadrage_content):
                 print(f"[MÉMOIRE] Consigne de révision et écarts enregistrés pour {target_issue}.")
             print_draft_status(target_issue)
-        elif is_cadrage_answers:
-            if not finalize_cadrage_answers(target_issue, cadrage_content, cadrage_before_run):
-                sys.exit(1)
         elif args.step == "patch":
             # Seuls les patchs produits pendant CETTE exécution
             patch_paths = [f for f in os.listdir(".")
@@ -1820,11 +1716,6 @@ def main():
                                 knowledge_subject, **knowledge)
                 if produced(release_note_file, run_started_at):
                     share_file(release_note_file, target_project, "release-note", knowledge_subject, **knowledge)
-        elif is_besoin:
-            if not finalize_besoin(target_issue, target_project, besoin_output, previous_besoin, run_started_at):
-                sys.exit(1)
-            share_knowledge(integration_tools.render_section_markdown(integration_tools.load_state(target_issue)),
-                            target_project, "besoin", knowledge_subject, **knowledge)
         elif is_postmerge:
             if not finalize_postmerge(args, target_issue, postmerge_summary, description_file,
                                       workspace_dir, run_started_at, stdout_output, knowledge):
@@ -1833,43 +1724,6 @@ def main():
         print(f"\n=== Étape {args.step.upper()} interrompue pour {target_issue} (Code: {returncode}) ===")
         # Quota atteint : Claude peut sortir en code 0, on signale quand même l'échec
         sys.exit(returncode or 1)
-
-
-def build_application_block(issue_key: str, application_arg: str) -> str:
-    """
-    Tickets du même Projet / Application (champ JIRA_APPLICATION_FIELD) : écrits dans un fichier consulté par
-    l'agent, dont l'index est injecté dans le prompt. '' si aucun.
-    """
-    field_id = os.getenv("JIRA_APPLICATION_FIELD", "").strip()
-    if not field_id:
-        print("[BESOIN] JIRA_APPLICATION_FIELD non renseigné : pas de tickets de référence.")
-        return ""
-    applications = ([a.strip() for a in application_arg.split(",") if a.strip()]
-                    or get_issue_field_values(issue_key, field_id))
-    if not applications:
-        print(f"[BESOIN] Aucun Projet / Application ({field_id}) sur {issue_key} : pas de tickets de référence.")
-        return ""
-    tickets, corpus_path = prepare_application_corpus(issue_key, applications, field_id)
-    return integration_tools.application_block(applications, tickets, corpus_path) if tickets else ""
-
-
-def prepare_application_corpus(issue_key: str, applications: list, field_id: str) -> tuple:
-    """
-    Récupère les tickets Jira (tous projets) des `applications` et les écrit dans un fichier consulté par l'agent.
-    Renvoie (tickets, chemin du fichier) ; ([], '') si aucun ticket.
-    """
-    try:
-        tickets = fetch_application_tickets(field_id, applications, issue_key,
-                                            _env_int("JIRA_APPLICATION_MAX_TICKETS", 300))
-    except (RuntimeError, requests.RequestException) as e:
-        print(f"[JIRA] ⚠️ Tickets de {', '.join(applications)} indisponibles : {e}")
-        return [], ""
-    if not tickets:
-        print(f"[JIRA] Aucun autre ticket pour {', '.join(applications)}.")
-        return [], ""
-    corpus_path = integration_tools.write_application_corpus(issue_key, applications, tickets)
-    print(f"[JIRA] {len(tickets)} ticket(s) {', '.join(applications)} fournis comme référence ({corpus_path}).")
-    return tickets, corpus_path
 
 
 def resolve_client_cucumber_repo(client_name: str, local_client_repo: str, wanted: str = "") -> tuple:
@@ -7818,45 +7672,6 @@ def run_cucumber_client(args, work_key: str, local_client_repo: str, local_std_r
     return exit_code
 
 
-def finalize_cadrage_answers(issue_key: str, cadrage: str, cadrage_before: str) -> bool:
-    """
-    Cadrage complété par l'agent avec les réponses : il revient en relecture (brouillon local), sans publication.
-    La publication dans Jira suit la validation de l'utilisateur (onglet Lancement).
-    """
-    if not cadrage.strip():
-        print(f"[CADRAGE] ❌ Cadrage vide après l'exécution de l'agent.")
-        return False
-    if cadrage.strip() == cadrage_before.strip():
-        print("[CADRAGE] Les réponses ne changent rien au cadrage.")
-    else:
-        print(f"[CADRAGE] Cadrage de {issue_key} complété avec les réponses, à relire et valider dans l'onglet "
-              f"Lancement.")
-    print_draft_status(issue_key)
-    return True
-
-
-def print_draft_status(issue_key: str) -> None:
-    """Statut de publication de l'analyse : brouillon tant que l'utilisateur ne l'a pas validée."""
-    state = analysis_publication.status(issue_key)
-    print(f"[PUBLICATION] {issue_key} : {state['libelle']}."
-          + ("" if state["publiee"] else " Elle sera publiée dans Jira à la validation de l'utilisateur."))
-
-
-def check_jira_untouched(step: str, before: dict, keys: list) -> bool:
-    """Compare l'état Jira relevé avant l'étape à l'état actuel : toute modification par l'agent est une erreur."""
-    after = jira_guard.snapshot(keys, step)
-    changed = jira_guard.changes(before, after)
-    if changed:
-        print(f"[JIRA] ❌ Jira modifié pendant l'étape {step} alors que l'analyse n'est pas validée : "
-              f"{', '.join(changed)}. Vérifiez le ticket dans Jira ; l'analyse locale n'est pas enregistrée.")
-        return False
-    unreadable = jira_guard.unreadable(after)
-    if unreadable:
-        print(f"[JIRA] ⚠️ État Jira illisible après l'étape ({', '.join(unreadable)}) : contrôle incomplet.")
-    print("[JIRA] Contrôle : aucune modification Jira pendant l'étape.")
-    return True
-
-
 def finalize_epic_draft(epic_key: str, previous_manifest: dict) -> bool:
     """
     Découpage rédigé ou révisé par l'agent : il reste un brouillon local. Aucune tâche n'est créée ni mise à jour
@@ -7882,30 +7697,6 @@ def finalize_epic_draft(epic_key: str, previous_manifest: dict) -> bool:
           + (f", dont {len(drafts)} à créer dans Jira" if drafts else "")
           + (f" ; analyses à republier après validation : {', '.join(t['key'] for t in created)}" if created else "")
           + ". Rien n'est créé ni publié dans Jira avant la validation du découpage.")
-    return True
-
-
-def finalize_besoin(issue_key: str, project_key: str, output_file: str, previous: dict, run_started_at: float) -> bool:
-    """Fusionne le besoin rédigé avec les questions déjà répondues, l'enregistre et le publie dans Jira."""
-    if not os.path.exists(output_file) or os.path.getmtime(output_file) < run_started_at:
-        print(f"[BESOIN] ❌ L'agent n'a pas écrit '{output_file}' pendant cette exécution.")
-        return False
-    try:
-        agent = integration_tools.load_agent_output(output_file)
-    except ValueError as e:
-        print(f"[BESOIN] ❌ Résultat de l'agent inexploitable : {e}")
-        return False
-    state = integration_tools.merge_agent_output(previous or {"issue": issue_key}, agent)
-    state["project"] = project_key
-    integration_tools.save_state(issue_key, state)
-    pending = len(state["questions"]) - len(integration_tools.answered(state))
-    print(f"[BESOIN] Besoin reformulé enregistré : {len(state['questions'])} question(s) dont {pending} en attente.")
-    try:
-        integration_tools.publish_state(issue_key, state)
-    except (RuntimeError, requests.RequestException) as e:
-        print(f"[BESOIN] ❌ Publication dans Jira impossible : {e}")
-        return False
-    print(f"[BESOIN] Section « {integration_tools.SECTION_TITLE} » mise à jour dans la description de {issue_key}.")
     return True
 
 

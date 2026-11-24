@@ -31,7 +31,6 @@ def _app(monkeypatch, tmp_path, page: str = "") -> tuple:
 def test_integration_page_by_default_runs_nothing_in_background(monkeypatch, tmp_path):
     at, calls = _app(monkeypatch, tmp_path)
     assert at.session_state["nav_page"] == "integration"
-    assert "1. Critères de Recherche Jira" in " ".join(m.value for m in at.markdown)
     # Rien des autres pages : ni la configuration, ni l'onglet Cucumber et ses tâches de fond
     assert not [s for s in at.subheader if "Configuration globale" in s.value]
     assert calls == []
@@ -44,13 +43,13 @@ def test_only_the_chosen_page_is_executed(monkeypatch, tmp_path):
 
 
 def test_search_criteria_kept_when_changing_page(monkeypatch, tmp_path):
-    at, _ = _app(monkeypatch, tmp_path)
-    at.text_input(key="integ_search_project").input("ABC").run()
+    at, _ = _app(monkeypatch, tmp_path, "lancement")
+    at.text_input(key="search_project").input("ABC").run()
     at.session_state["nav_page"] = "configuration"
     at.run()
-    at.session_state["nav_page"] = "integration"
+    at.session_state["nav_page"] = "lancement"
     at.run()
-    assert at.text_input(key="integ_search_project").value == "ABC"
+    assert at.text_input(key="search_project").value == "ABC"
 
 
 def test_set_timer_outside_a_fragment_does_nothing():

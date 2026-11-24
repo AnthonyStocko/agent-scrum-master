@@ -40,8 +40,7 @@ from tools import (cucumber_a_revoir,
     cucumber_studio,
     cucumber_testability,
     cucumber_tools,
-    cucumber_verify,
-    integration_tools)
+    cucumber_verify)
 from agent_socle import jenkins_tools, knowledge_tools
 from tools import analysis_publication
 from tools.epic_tools import draft_tasks, load_epic_manifest, missing_analyses, task_analysis, task_file
@@ -52,7 +51,8 @@ from agent_socle.jira_tools import (
 from agent_socle.db_tools import DB_TYPES, test_connection
 from tools import cucumber_overview, cucumber_set_aside, assistant, db_restore
 # Lancement de main.py et journal : socle (commun aux IHM des agents)
-from agent_socle.ihm import interruption_cause, journal_phrases, run_log_path, run_main_step
+from agent_socle.ihm import (interruption_cause, journal_phrases, render_technical_journal, run_log_path,
+                             run_main_step, search_criteria_form, search_jira_tickets)
 from agent_socle import skills
 from tools import cucumber_env_diagnosis, cucumber_copied_config
 from agent_socle import mcp_servers, ui_timer
@@ -210,21 +210,6 @@ def validate_epic_split(epic_key: str, project: str, client_repo: str, db_schema
     return returncode == 0
 
 
-def render_technical_journal() -> None:
-    """Panneau « Journal technique », replié : sortie brute des traitements (jamais dans une carte)."""
-    with st.expander("Journal technique", icon=":material/terminal:"):
-        if not os.path.exists(JOURNAL_PATH):
-            st.caption("Aucun traitement lancé pour l'instant.")
-            return
-        with open(JOURNAL_PATH, "r", encoding="utf-8", errors="replace") as f:
-            tail = f.readlines()[-400:]
-        st.caption(f"Sortie brute des derniers traitements (400 dernières lignes) — {JOURNAL_PATH} ; journal "
-                   f"conservé de chaque exécution dans {RUN_LOGS_DIR}"
-                   + (f" (dernière : {st.session_state['last_run_log']})" if st.session_state.get("last_run_log")
-                      else ""))
-        st.code("".join(tail), language="text")
-
-
 def run_epic_patches(epic_key: str, project: str, client_repo: str, db_schema: str) -> bool:
     """Génère le patch de chaque tâche enfant de l'épopée, dans l'ordre du découpage. S'arrête au premier échec."""
     tasks = [t for t in load_epic_manifest(epic_key).get("tasks", []) if t.get("key")]
@@ -249,98 +234,6 @@ def run_epic_patches(epic_key: str, project: str, client_repo: str, db_schema: s
         st.success(f"Patch généré et attaché au ticket Jira {task['key']}.")
         show_release_note(task["key"], patch_started_at)
     return True
-
-
-def search_criteria_form(key_prefix: str) -> dict:
-    """Critères de recherche Jira, mêmes champs et valeurs par défaut dans les onglets Lancement et Intégration."""
-    # Accès direct par lien ou clé : prioritaire sur tous les autres critères
-    issue_keys = parse_issue_keys(st.text_input(
-        "Lien(s) ou clé(s) Jira (optionnel) :",
-        key=f"{key_prefix}search_links",
-        placeholder="https://…/browse/PROJ-123, PROJ-456",
-        help="Collez un ou plusieurs liens de tickets Jira (ou leurs clés), séparés par des virgules ou des espaces. "
-             "S'il est renseigné, les critères ci-dessous (projet, équipe, statuts, labels) sont ignorés."
-    ))
-    if issue_keys:
-        st.caption("Recherche directe : " + ", ".join(issue_keys) + " — les autres critères sont ignorés.")
-
-    # Recherche rapide « épopées ouvertes de l'équipe » (onglet Configuration)
-    open_epics_team = os.getenv("JIRA_OPEN_EPICS_TEAM", "").strip()
-    open_epics_status = os.getenv("JIRA_OPEN_EPICS_STATUS", "").strip()
-    open_epics_only = st.checkbox(
-        f"Épopées au statut « {open_epics_status} » de l'équipe {open_epics_team}"
-        if open_epics_team and open_epics_status else "Épopées ouvertes de mon équipe",
-        key=f"{key_prefix}open_epics_only",
-        disabled=not (open_epics_team and open_epics_status) or bool(issue_keys),
-        help="Si coché, la recherche porte sur les épopées du projet cible à ce statut pour cette équipe : "
-             "les critères Équipe, Statuts et Labels ci-dessous sont ignorés. "
-             "Équipe et statut : JIRA_OPEN_EPICS_TEAM et JIRA_OPEN_EPICS_STATUS (onglet Configuration)."
-    ) and bool(open_epics_team and open_epics_status) and not issue_keys
-    disable_filters = open_epics_only or bool(issue_keys)
-
-    # Valeurs par défaut du .env posées une fois : la saisie est gardée quand on change de page (PERSISTENT_KEYS)
-    for name, env_name in (("search_project", "JIRA_PROJECT_KEY"), ("search_team", "JIRA_SEARCH_TEAM"),
-                           ("search_statuses", "JIRA_SEARCH_STATUSES"), ("search_labels", "JIRA_SEARCH_LABELS")):
-        st.session_state.setdefault(f"{key_prefix}{name}", os.getenv(env_name, ""))
-    col1, col2 = st.columns(2)
-    with col1:
-        jira_project_input = st.text_input(
-            "Projet Jira cible :",
-            key=f"{key_prefix}search_project",
-            help="Clé du projet Jira (ex. PROJ).",
-            disabled=bool(issue_keys)
-        )
-        jira_team_input = st.text_input(
-            "Équipe / Composant (Optionnel) :",
-            key=f"{key_prefix}search_team",
-            help="Composant Jira ou équipe Atlassian (ex. WMS, Socle...)",
-            disabled=disable_filters
-        )
-
-    with col2:
-        jira_status_input = st.text_input(
-            "États / Statuts (Séparés par une virgule) :",
-            key=f"{key_prefix}search_statuses",
-            help="Ex: Analysée, En cours, A traiter (laissez vide pour tous les états)",
-            disabled=disable_filters
-        )
-        jira_label_input = st.text_input(
-            "Labels (Séparés par une virgule) :",
-            key=f"{key_prefix}search_labels",
-            help="Ex. le label d'attente de l'équipe (laissez vide si aucun label requis)",
-            disabled=disable_filters
-        )
-
-    return {
-        # Recherche par lien : projet du premier ticket (repris pour la suite du traitement)
-        "project_key": issue_keys[0].rsplit("-", 1)[0] if issue_keys else jira_project_input.strip().upper(),
-        "issue_keys": issue_keys,
-        "statuses": [s.strip() for s in jira_status_input.split(",") if s.strip()],
-        "labels": [l.strip() for l in jira_label_input.split(",") if l.strip()],
-        "team": jira_team_input.strip(),
-        "open_epics_only": open_epics_only,
-        "open_epics_team": open_epics_team,
-        "open_epics_status": open_epics_status,
-    }
-
-
-def search_jira_tickets(criteria: dict) -> list:
-    """Tickets correspondant aux critères de search_criteria_form. Lève JiraSearchError."""
-    if criteria.get("issue_keys"):
-        return fetch_tickets_data(project_key=criteria["project_key"], issue_keys=criteria["issue_keys"])
-    if criteria["open_epics_only"]:
-        return fetch_tickets_data(
-            project_key=criteria["project_key"],
-            statuses=[criteria["open_epics_status"]],
-            epics_only=True,
-            atlassian_team=criteria["open_epics_team"]
-        )
-    return fetch_tickets_data(
-        project_key=criteria["project_key"],
-        statuses=criteria["statuses"],
-        labels=criteria["labels"],
-        team=criteria["team"]
-    )
 
 
 ENV_PATH = ".env"
@@ -1010,25 +903,6 @@ if PAGE == "lancement":
 # ---------------------------------------------------------
 # ONGLET 2 : INTÉGRATION — BESOIN REFORMULÉ ET QUESTIONS OUVERTES
 # ---------------------------------------------------------
-def run_besoin_step(issue_key: str, project: str, application: str) -> int:
-    """Rédaction (ou complément) du besoin par l'agent, journal affiché au fil de l'eau."""
-    return run_main_step([
-        sys.executable, "main.py",
-        "--issue", issue_key,
-        "--project", project,
-        "--step", "besoin",
-        "--application", application
-    ])
-
-
-def integration_option_label(ticket: dict) -> str:
-    """'CLÉ - Titre [statut]', suivi du nombre de questions en attente s'il y en a."""
-    label = f"{ticket['key']} - {ticket.get('summary', '')} [{ticket.get('status', '?')}]"
-    state = integration_tools.load_state(ticket["key"])
-    if state:
-        pending = len(state.get("questions", [])) - len(integration_tools.answered(state))
-        label += f" · ❓ {pending} en attente" if pending else " · ✅ besoin rédigé"
-    return label
 
 
 def render_cucumber_run(ctx: dict, state: dict) -> None:
@@ -1305,144 +1179,9 @@ def render_cucumber_corrections(client: str, cucumber_cmd: list, rows: list, sta
 
 
 if PAGE == "integration":
-    render_technical_journal()
-    st.markdown("### 1. Critères de Recherche Jira")
-    integration_criteria = search_criteria_form("integ_")
-
-    if st.button("🔍 Rechercher les tickets", type="primary", use_container_width=True, key="integ_search"):
-        with st.spinner(f"Recherche Jira sur le projet {integration_criteria['project_key']}..."):
-            try:
-                integration_found, integration_error = search_jira_tickets(integration_criteria), None
-            except JiraSearchError as e:
-                integration_found, integration_error = [], str(e)
-        st.session_state["integ_tickets"] = [
-            {"key": t["key"], "summary": t.get("summary", ""), "status": t.get("status", "")} for t in integration_found
-        ]
-        st.session_state["integ_project"] = integration_criteria["project_key"]
-        if integration_error:
-            st.error(f"❌ {integration_error}")
-        elif not integration_found:
-            st.warning(f"Aucun ticket trouvé avec ces critères sur le projet {integration_criteria['project_key']}.")
-
-    integration_tickets = st.session_state.get("integ_tickets", [])
-    if integration_tickets:
-        st.markdown("---")
-        st.markdown(f"### 2. Tickets trouvés ({len(integration_tickets)})")
-        tickets_by_key = {t["key"]: t for t in integration_tickets}
-        integ_ticket = st.selectbox(
-            "Ticket à intégrer :",
-            list(tickets_by_key),
-            format_func=lambda key: integration_option_label(tickets_by_key[key]),
-            key="integ_selected",
-        )
-        integ_project = st.session_state.get("integ_project") or os.getenv("JIRA_PROJECT_KEY", "")
-        jira_domain = os.getenv("JIRA_DOMAIN", "").replace("https://", "").replace("http://", "").strip("/")
-        if jira_domain:
-            st.caption(f"[Ouvrir {integ_ticket} dans Jira](https://{jira_domain}/browse/{integ_ticket})")
-
-        application_field = os.getenv("JIRA_APPLICATION_FIELD", "").strip()
-        integ_application = st.text_input(
-            "Projet / Application des tickets de référence (optionnel) :",
-            key=f"integ_application_{integ_ticket}",
-            placeholder="Vide = valeur du champ Projet / Application du ticket",
-            disabled=not application_field,
-            help="L'agent consulte tous les tickets Jira (tous projets) de ce Projet / Application pour rédiger le "
-                 "besoin. Ex: APPLI. Plusieurs valeurs séparées par des virgules. "
-                 + ("" if application_field else "Renseignez JIRA_APPLICATION_FIELD dans l'onglet Configuration."),
-        ).strip()
-
-        has_state = bool(integration_tools.load_state(integ_ticket))
-        if st.button("📝 Rédaction du besoin" if not has_state else "📝 Rédiger à nouveau le besoin (avec les réponses)",
-                     type="primary", use_container_width=True, key="integ_redaction",
-                     help="L'agent reformule le besoin et liste les questions sans réponse dans l'expression initiale. "
-                          "Le résultat est ajouté à la description Jira (section « Intégration du besoin »)."):
-            st.info(f"Rédaction du besoin de {integ_ticket} en cours...")
-            returncode = run_besoin_step(integ_ticket, integ_project, integ_application)
-            if returncode == 0:
-                st.success(f"Besoin reformulé et questions ajoutés à la description Jira de {integ_ticket}.")
-            else:
-                st.error(f"La rédaction du besoin a échoué (code {returncode}).")
-
-        integ_state = integration_tools.load_state(integ_ticket)
-        if integ_state:
-            st.markdown("### 3. Besoin reformulé")
-            with st.container(border=True):
-                st.markdown(integ_state.get("besoin", "") or "_Vide._")
-
-            questions = integ_state.get("questions", [])
-            pending_count = len(questions) - len(integration_tools.answered(integ_state))
-            st.markdown(f"### 4. Questions ({pending_count} en attente)" if questions else "### 4. Questions")
-            if not questions:
-                st.success("Aucune question ouverte : le besoin est complet.")
-            else:
-                # La clé dépend de la date de l'état : les champs repartent des valeurs enregistrées après chaque mise à jour
-                version = integ_state.get("updated_at", "")
-                with st.form(f"integ_answers_{integ_ticket}"):
-                    answers = {}
-                    for q in questions:
-                        st.markdown(f"**Q{q['id']}.** {q['question']}")
-                        if q.get("pourquoi"):
-                            st.caption(f"Pourquoi : {q['pourquoi']}")
-                        answers[q["id"]] = st.text_area(
-                            f"Réponse Q{q['id']}", value=q.get("reponse", ""), height=80,
-                            key=f"integ_answer_{integ_ticket}_{q['id']}_{version}",
-                            label_visibility="collapsed", placeholder="Votre réponse…",
-                        )
-                    save_answers = st.form_submit_button(
-                        "📨 Envoyer les réponses et compléter le besoin", type="primary", use_container_width=True,
-                        help="Les réponses sont ajoutées à la description Jira, puis l'agent complète le besoin "
-                             "reformulé avec ces réponses et ne garde que les questions restantes.")
-                if save_answers:
-                    changed = [q for q in questions if answers[q["id"]].strip() != q.get("reponse", "").strip()]
-                    for q in questions:
-                        q["reponse"] = answers[q["id"]].strip()
-                    if not changed:
-                        st.info("Aucune réponse nouvelle ou modifiée : rien à envoyer.")
-                    else:
-                        integration_tools.save_state(integ_ticket, integ_state)
-                        # Réponses publiées d'abord : elles restent dans Jira même si l'agent échoue ensuite
-                        try:
-                            with st.spinner(f"Ajout des réponses à la description de {integ_ticket}..."):
-                                integration_tools.publish_state(integ_ticket, integ_state)
-                            publish_error = None
-                        except Exception as e:
-                            publish_error = e
-                        if publish_error:
-                            st.error(f"Réponses enregistrées localement, mais la mise à jour Jira a échoué : {publish_error}")
-                        else:
-                            st.info(f"{len(changed)} réponse(s) ajoutée(s) à Jira. L'agent complète le besoin...")
-                            returncode = run_besoin_step(integ_ticket, integ_project, integ_application)
-                            cadrage_done = None
-                            if returncode == 0 and os.path.exists(f"{integ_ticket}-cadrage.md"):
-                                st.info(f"Besoin complété. L'agent complète maintenant le cadrage de {integ_ticket}...")
-                                cadrage_done = run_main_step([
-                                    sys.executable, "main.py",
-                                    "--issue", integ_ticket,
-                                    "--project", integ_project,
-                                    "--step", "cadrage-reponses"
-                                ]) == 0
-                            if returncode == 0 and cadrage_done is not False:
-                                st.session_state["integ_completed"] = (integ_ticket, cadrage_done)
-                                st.rerun()
-                            if returncode != 0:
-                                st.error(f"Les réponses sont dans Jira, mais l'agent n'a pas pu compléter le besoin "
-                                         f"(code {returncode}). Relancez la rédaction ci-dessus.")
-                            else:
-                                st.error(f"Besoin complété, mais le cadrage {integ_ticket}-cadrage.md n'a pas pu être "
-                                         "complété avec les réponses : voir le journal technique (en haut de l'onglet).")
-                st.caption("Les réponses déjà envoyées restent dans la description Jira, sous leur question.")
-            completed = st.session_state.get("integ_completed")
-            if completed and completed[0] == integ_ticket:
-                del st.session_state["integ_completed"]
-                remaining = len(questions) - len(integration_tools.answered(integ_state))
-                st.success(f"Besoin de {integ_ticket} complété avec les réponses et mis à jour dans Jira. "
-                           + (f"{remaining} question(s) restent ouvertes." if remaining else "Plus aucune question ouverte."))
-                if completed[1]:
-                    st.info(f"Le cadrage {integ_ticket}-cadrage.md a été complété avec les réponses : brouillon à "
-                            "relire et valider dans l'onglet Lancement, il n'est publié dans Jira qu'à la validation.")
-                if completed[1] is None:
-                    st.caption(f"Pas encore de cadrage pour {integ_ticket} : l'analyse lancée depuis l'onglet "
-                               "Lancement tiendra compte des réponses présentes dans la description.")
+    # Intégration : agent-integration (IHM 8505)
+    st.link_button("Intégration", os.getenv("AGENT_INTEGRATION_URL", "").strip() or "http://localhost:8505",
+                   icon=":material/integration_instructions:")
 
 
 NEW_PROJECT = "__nouveau__"

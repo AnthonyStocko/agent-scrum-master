@@ -87,21 +87,6 @@ STOPWORDS = {
 # Nom du client et chemins
 # ---------------------------------------------------------------------------
 
-def client_name_from_repo(repo: str) -> str:
-    """
-    Nom du client déduit du dépôt saisi, en minuscules :
-    https://git.kiscloud.io/projects/CLIENT -> client ; .../scm/client/odatio-client.git -> client ;
-    clone local .tmp/client_CLIENT ou C:/dev/client -> client.
-    """
-    repo = (repo or "").strip().rstrip("/\\")
-    if not repo:
-        return ""
-    match = re.search(r"/projects/([^/]+)", repo) or re.search(r"/scm/([^/]+)/", repo)
-    name = match.group(1) if match else re.split(r"[\\/]", repo)[-1]
-    if name.lower().startswith("client_"):
-        name = name[len("client_"):]
-    return re.sub(r"[^a-z0-9_-]", "", name.lower())
-
 
 def work_id(client_name: str) -> str:
     """Identifiant de travail de l'étape (à la place d'une clé de ticket Jira)."""
@@ -138,6 +123,7 @@ def state_path(client_name: str) -> str:
     return os.path.join(cache_dir(client_name), "etat.json")
 
 
+from agent_socle.projets import client_name_from_repo  # noqa: E402,F401 — extrait au socle
 from agent_socle.fichiers import _read_json  # noqa: E402,F401 — extrait au socle
 
 
@@ -233,8 +219,6 @@ def drop_excluded(state: dict, spec_ids) -> list:
 
 
 from agent_socle.git_tools import (AGENT_GIT_NAME, AGENT_GIT_EMAIL, _COMMITTING, agent_identity, _git, git_repos, pick_ref)  # noqa: E402,F401 — extraits au socle
-
-
 
 
 def rev_parse(repo: str, ref: str) -> str:

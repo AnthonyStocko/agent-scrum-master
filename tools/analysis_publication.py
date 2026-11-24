@@ -25,10 +25,12 @@ import os
 import re
 from datetime import datetime
 
-from tools import integration_tools
+from agent_socle import besoin
+# Statut de publication (lecture) : socle, aussi lu par le manager
+from agent_socle.publication import (PUBLICATION_DIR, _fingerprint, _read, _record_path, cadrage_path,
+                                     load_record, status)
 from agent_socle.jira_tools import update_jira_cadrage
 
-PUBLICATION_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".tmp", "publication")
 DEFAULT_LIMIT = 32767
 DEFAULT_MARGIN = 1500
 SUMMARY_SENTENCE = "Analyse complète en commentaire (« Analyse de l'agent »)."
@@ -47,35 +49,6 @@ class IncompleteAnalysis(RuntimeError):
     """Analyse lue dans Jira incomplète (partie de commentaire absente) : aucun patch ne doit en partir."""
 
 
-def cadrage_path(issue_key: str) -> str:
-    return f"{issue_key}-cadrage.md"
-
-
-def _fingerprint(text: str) -> str:
-    return hashlib.sha256((text or "").strip().replace("\r\n", "\n").encode("utf-8")).hexdigest()
-
-
-def _record_path(issue_key: str) -> str:
-    return os.path.join(PUBLICATION_DIR, f"{issue_key}.json")
-
-
-def _read(path: str) -> str:
-    try:
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
-            return f.read()
-    except OSError:
-        return ""
-
-
-def load_record(issue_key: str) -> dict:
-    try:
-        with open(_record_path(issue_key), "r", encoding="utf-8") as f:
-            record = json.load(f)
-        return record if isinstance(record, dict) else {}
-    except (OSError, ValueError):
-        return {}
-
-
 def record_publication(issue_key: str, text: str, when: datetime = None, **details) -> dict:
     """Mémorise que `text` est la version publiée dans Jira (date, empreinte et forme de la publication)."""
     record = {"empreinte": _fingerprint(text),
@@ -84,29 +57,6 @@ def record_publication(issue_key: str, text: str, when: datetime = None, **detai
     with open(_record_path(issue_key), "w", encoding="utf-8") as f:
         json.dump(record, f, ensure_ascii=False, indent=2)
     return record
-
-
-def status(issue_key: str, text: str = None) -> dict:
-    """
-    État de l'analyse : {"publiee": bool, "publiee_le": date de la dernière publication ou "", "libelle": texte,
-    "message": forme de la publication (résumé + commentaires) ou ""}. `text` : analyse à évaluer (par défaut le
-    fichier '<TICKET>-cadrage.md').
-    """
-    text = _read(cadrage_path(issue_key)) if text is None else text
-    record = load_record(issue_key)
-    published_at = record.get("publiee_le", "")
-    published = bool(text.strip()) and record.get("empreinte") == _fingerprint(text)
-    date_label = published_at.replace("T", " à ") if published_at else ""
-    if published:
-        label = f"Publiée dans Jira le {date_label}"
-        if record.get("message"):
-            label += f" — {record['message']}"
-    elif published_at:
-        label = f"Analyse non publiée (brouillon) : révisée depuis sa publication du {date_label}"
-    else:
-        label = "Analyse non publiée (brouillon)"
-    return {"publiee": published, "publiee_le": published_at, "libelle": label,
-            "message": record.get("message", "") if published else ""}
 
 
 def save_draft(issue_key: str, text: str) -> None:
@@ -374,7 +324,7 @@ def publish_to_jira(key: str, text: str, jira=None, when: datetime = None) -> di
     """
     from agent_socle.jira_tools import upsert_cadrage_adf
     jira = jira or JiraBackend()
-    stops = (integration_tools.SECTION_TITLE,)
+    stops = (besoin.SECTION_TITLE,)
     version = (when or datetime.now()).strftime("%d/%m/%Y %H:%M")
     current = jira.get_description(key)
     full = upsert_cadrage_adf(current, text, stops)
@@ -417,7 +367,7 @@ def publish(issue_key: str, text: str = None, publisher=None, jira=None) -> dict
     if status(issue_key, text)["publiee"]:
         return status(issue_key, text)
     if publisher is not None:
-        publisher(issue_key, text, stop_titles=(integration_tools.SECTION_TITLE,))
+        publisher(issue_key, text, stop_titles=(besoin.SECTION_TITLE,))
         record_publication(issue_key, text)
         return status(issue_key, text)
     result = publish_to_jira(issue_key, text, jira)
