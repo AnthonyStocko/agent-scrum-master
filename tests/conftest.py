@@ -53,6 +53,16 @@ def _local(hote) -> bool:
 
 
 @pytest.fixture(autouse=True)
+def _git_borne(tmp_path_factory, monkeypatch):
+    """
+    Git ne remonte jamais au-dessus du dossier temporaire de pytest : un dossier de test qui n'est pas un dépôt
+    échoue (« not a git repository ») au lieu d'atteindre un dépôt parent du poste (ex. le dossier personnel), où
+    add/commit écriraient et parcourraient tout le profil.
+    """
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path_factory.getbasetemp().parent))
+
+
+@pytest.fixture(autouse=True)
 def _reseau_coupe(request, monkeypatch):
     """
     Aucun appel réseau réel en test (Bitbucket, Jira, Jenkins, groundcover… avec les jetons du .env du poste) :
