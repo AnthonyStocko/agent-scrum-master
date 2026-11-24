@@ -44,7 +44,9 @@ def test_app_applique_le_lien_une_fois(monkeypatch, tmp_path):
     assert at.session_state["jira_tickets"] == ["ODA-12"]
     assert at.session_state["jira_titles"] == {"ODA-12": "Titre du ticket"}
     text = " ".join(m.value for m in at.markdown)
-    assert "Ouvert depuis le manager" in text and "### 2. Sélection du Ticket" in text
+    assert "Ouvert depuis le manager" in text
+    # Page Lancement dans agent-lancement (8506) : le ticket lui est transmis (test de la page déplacé)
+    assert "ticket=ODA-12" in at.get("link_button")[0].proto.url
     # Choix fait ensuite dans l'IHM : le lien n'est pas réappliqué
     at.session_state["nav_page"] = "integration"
     at.run()

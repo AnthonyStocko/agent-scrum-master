@@ -25,8 +25,8 @@ from datetime import datetime
 
 from tools import cucumber_tools
 from tools.cucumber_tools import _git
+from agent_socle.depots import READ_ONLY_PUSH_URL, disable_push  # noqa: E402,F401 — extraits au socle
 
-READ_ONLY_PUSH_URL = "lecture-seule://envoi-desactive"
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 JOURNAL = "ecritures.jsonl"
 PAUSE = "pause.json"
@@ -184,12 +184,6 @@ def register_repo(client: str, cucumber_repo_dir: str) -> str:
         document.setdefault("detecte", {})["cucumber_repo_url"] = url
         cucumber_tools._write_json(cucumber_profile.profile_path(client), document)
     return url
-
-
-def disable_push(repo_dir: str) -> None:
-    """Copie de lecture : adresse d'envoi désactivée (un push y échoue, la garde le refuse avant Git)."""
-    if repo_dir and os.path.isdir(os.path.join(repo_dir, ".git")):
-        _git(repo_dir, "config", "remote.origin.pushurl", READ_ONLY_PUSH_URL)
 
 
 def outgoing_range(worktree: str) -> tuple:

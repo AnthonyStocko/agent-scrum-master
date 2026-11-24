@@ -247,8 +247,7 @@ def test_block_and_tools_follow_the_configuration(main_module, monkeypatch):
 
 
 RULES = {
-    "cadrage": "N'écris rien dans Jira", "refine": "Ne génère AUCUN patch", "epic_cadrage": "Tu ne poses aucune question",
-    "patch": "Tu ne dois JAMAIS poser de questions", "patch_cucumber": "c'est ta source de référence",
+    "patch_cucumber": "c'est ta source de référence",
     "cucumber_client_lot": "Écris les tests de ce lot",
     "cucumber_client_fix": "Tu ne supprimes JAMAIS un scénario", "cucumber_client_review": "C'est la SEULE suppression",
 }
@@ -269,6 +268,4 @@ def test_prompts_carry_the_doc_block_and_keep_their_rules(main_module, name):
 def test_cached_lot_system_prompt_is_untouched(main_module):
     with open(os.path.join(main_module.DEFAULT_PROMPTS_DIR, "cucumber_client_lot_systeme.md"), encoding="utf-8") as f:
         assert "odatio_docs" not in f.read()
-    with open(os.path.join(main_module.DEFAULT_PROMPTS_DIR, "cadrage.md"), encoding="utf-8") as f:
-        assert "**Documentation consultée**" in f.read()
 

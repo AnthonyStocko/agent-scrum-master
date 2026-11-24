@@ -11,6 +11,7 @@ import sys
 import pytest
 
 from tests.conftest import git, write
+from agent_socle import depots
 
 
 @pytest.fixture
@@ -25,6 +26,7 @@ def main_module():
 
 def test_fetch_only_and_unpushed_commits_saved(repo, tmp_path, main_module, monkeypatch):
     monkeypatch.setattr(main_module, "BACKUP_DIR", str(tmp_path / "sauvegardes"))
+    monkeypatch.setattr(depots, "BACKUP_DIR", str(tmp_path / "sauvegardes"))
     write(os.path.join(repo, "a.txt"), "v1\n")
     git(repo, "add", "-A")
     git(repo, "commit", "-qm", "v1")

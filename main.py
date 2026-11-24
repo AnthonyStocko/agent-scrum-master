@@ -19,7 +19,6 @@ from dotenv import load_dotenv
 
 from tools import (cucumber_cost,
     cucumber_lessons,
-    estimation,
     cucumber_handover,
     cucumber_spec_memory,
     cucumber_prevention)
@@ -84,11 +83,7 @@ from agent_socle import (bitbucket_std,
     jenkins_tools,
     skills)
 from agent_socle.jira_cli import attach_files, create_or_get_issue
-from tools.epic_tools import (
-    _restore_keys as restore_epic_keys, draft_tasks, epic_manifest_path, load_epic_manifest, save_epic_manifest,
-    sync_epic_tasks, attach_existing_analyses, missing_analyses,
-)
-from tools import analysis_publication, cucumber_java21, cucumber_repo_setup, cucumber_simple, cucumber_simple_init
+from tools import cucumber_java21, cucumber_repo_setup, cucumber_simple, cucumber_simple_init
 from agent_socle import jira_guard, livraisons, odatio_docs
 # Dossier des modules du socle (CLI lancées par Claude : db_tools, bitbucket_code, groundcover_tools…)
 SOCLE_DIR = os.path.dirname(os.path.abspath(odatio_docs.__file__))
@@ -128,7 +123,33 @@ from agent_socle.cli import (
     flush_knowledge_outbox,
     ticket_client,
     print_draft_status,
-    check_jira_untouched)
+    check_jira_untouched,
+    _safe_memory,
+    share_file,
+    DB_BLOCK_WORDING,
+    _build_db_block,
+    build_db_block)
+# Dépôts de code partagés (Standard, client, Cucumber Standard) : socle
+from agent_socle.depots import (
+    ODATIO_VERSION,
+    STD_READER,
+    STD_LOCAL_ROOT,
+    BACKUP_DIR,
+    bitbucket_base_url,
+    odatio_version_from_pom,
+    detect_odatio_version,
+    _force_rmtree,
+    _git_out,
+    _same_git_url,
+    cucumber_std_clone_dir,
+    checkout_cucumber_std_ref,
+    ensure_cucumber_std_repo,
+    update_clone,
+    sync_working_copy,
+    fetch_age_minutes,
+    std_fetch_max_age,
+    fetch_workers,
+    ensure_local_repo)
 from agent_socle.jira_tools import (
     fetch_application_tickets, find_jira_issue_by_summary, get_epic_children, get_full_jira_issue_context,
     get_jira_issue_details,
@@ -153,16 +174,6 @@ logging.getLogger("dotenv.main").setLevel(logging.ERROR)
 load_dotenv()
 if env_tools.check_env(".env"):
     print(f"[CONFIGURATION] ⚠️ {env_tools.check_line(env_tools.check_env('.env'))}")
-
-
-def _safe_memory(action, *args, **kwargs) -> bool:
-    """La capitalisation ne doit jamais faire échouer une étape réussie."""
-    try:
-        action(*args, **kwargs)
-        return True
-    except Exception as e:
-        print(f"[MÉMOIRE] ⚠️ Capitalisation impossible ({e})")
-        return False
 
 
 # ---------------------------------------------------------------------------
@@ -196,64 +207,10 @@ CURRENT_LOT = {"lot": None}
 # Release note & base de données
 # ---------------------------------------------------------------------------
 
-def clean_release_note(text: str) -> str:
-    """Ramène le fichier rédigé par l'agent à un seul paragraphe (sans titre ni puce)."""
-    lines = []
-    for line in (text or "").splitlines():
-        s = line.strip()
-        if not s or s.startswith("#") or s == "---" or re.fullmatch(r"\**release\s*notes?\s*:?\**", s, re.IGNORECASE):
-            continue
-        lines.append(re.sub(r"^[-*]\s+", "", s))
-    return re.sub(r"\s+", " ", " ".join(lines)).strip()
-
-
-def publish_release_note(issue_key: str, note_path: str, run_started_at: float) -> bool:
-    """Ajoute la release note en fin de description Jira. Un échec n'interrompt jamais l'étape patch."""
-    if not os.path.exists(note_path) or os.path.getmtime(note_path) < run_started_at:
-        print(f"[RELEASE NOTE] ⚠️ '{note_path}' n'a pas été produit pendant cette exécution : description Jira inchangée.")
-        return False
-    paragraph = clean_release_note(_read_text(note_path))
-    if not paragraph:
-        print(f"[RELEASE NOTE] ⚠️ '{note_path}' est vide : description Jira inchangée.")
-        return False
-    try:
-        update_jira_release_note(issue_key, paragraph)
-        print(f"[RELEASE NOTE] ✅ Paragraphe « Release note » ajouté à la fin de la description de {issue_key}.")
-        return True
-    except Exception as e:
-        print(f"[RELEASE NOTE] ⚠️ Mise à jour de la description Jira impossible ({e}). Fichier local conservé : {note_path}")
-        return False
-
 
 # ---------------------------------------------------------------------------
 # Connaissances partagées : dépôt des analyses produites (knowledge_tools), jamais bloquant
 # ---------------------------------------------------------------------------
-
-
-def share_file(path: str, projet: str, doc_type: str, sujet: str, **fields) -> dict:
-    """share_knowledge du contenu d'un fichier produit ({} s'il est absent)."""
-    return share_knowledge(_read_text(path), projet, doc_type, sujet, **fields) if path else {}
-
-
-def epic_markdown(epic_key: str) -> str:
-    """Découpage d'une épopée en un document : une section par tâche (clé, titre) suivie de son analyse."""
-    tasks = load_epic_manifest(epic_key).get("tasks", [])
-    parts = [f"# Découpage de l'épopée {epic_key}", ""]
-    for number, task in enumerate(tasks, 1):
-        parts += [f"## {number}. {task.get('key') or 'tâche non créée'} — {task.get('summary', '')}", "",
-                  _read_text(task.get("file") or "").strip(), ""]
-    if tasks and os.getenv("ESTIMATION_ENABLED", "1").strip() != "0":
-        # Chiffrage par tâche enfant et total de l'épopée
-        parts += [estimation.epic_summary([(f"{t.get('key') or f'Tâche {n}'} — {t.get('summary', '')}",
-                                            _read_text(t.get("file") or "")) for n, t in enumerate(tasks, 1)],
-                                          epic_key.split("-")[0]), ""]
-    return "\n".join(parts) if tasks else ""
-
-
-def patch_recap(issue_key: str, patch_paths: list, agent_output: str) -> str:
-    """Récapitulatif d'un patch : fichiers produits et fin de la sortie de l'agent (son récapitulatif)."""
-    names = "\n".join(f"- {os.path.basename(p)}" for p in patch_paths)
-    return f"# Récapitulatif du patch {issue_key}\n\nPatchs produits :\n{names}\n\n{_extract_recap(agent_output, 6000)}\n"
 
 
 def inventory_markdown(client: str, specifics: dict) -> str:
@@ -263,31 +220,6 @@ def inventory_markdown(client: str, specifics: dict) -> str:
     lines += [f"| {s['id']} | {str(s.get('libelle', '')).replace('|', '/')} | {s.get('type', '')} | {s.get('couverture', '')} |"
               for s in specifics.values()]
     return "\n".join(lines) + "\n"
-
-
-# Formulations du bloc base propres à l'étape (défaut : cadrage, révision et patch d'un ticket)
-DB_BLOCK_WORDING = {
-    "default": {
-        "db_usage": "les données du cas décrit dans le ticket",
-        "db_findings_target": "la Partie 2 (Analyse Technique) du cadrage",
-        "db_private_targets": "dans le cadrage,\n  dans Jira ni dans le patch",
-        "db_max_commands": "8",
-    },
-    "generate-cucumber-client": {
-        "db_error_rule": "DB_ERROR=… dû à TA requête (colonne ou table inexistante, jointure fausse) : corrige-la "
-                         "avec les colonnes réelles que donne l'erreur (sinon un describe de toutes les tables de la "
-                         "requête en une commande), sans deviner les colonnes (« id » n'est pas toujours la clé). "
-                         "N'abandonne la base que si la connexion elle-même échoue, et signale-le en une ligne.",
-        "db_usage": "le paramétrage qui active ou conditionne les spécifiques du lot, ainsi que les valeurs de "
-                    "référence utiles aux jeux de données des scénarios (articles, emplacements, statuts, codes "
-                    "existants). Une donnée de référence introuvable ou un échec « donnée de référence absente » se "
-                    "vérifie en base avant d'être créé dans le Background ou signalé",
-        "db_findings_target": "ta réponse finale (champ « raison » d'un lot, « restantes » d'une correction), et "
-                              "appuie les jeux de données des scénarios sur ces valeurs réelles",
-        "db_private_targets": "dans les scénarios,\n  les Step Definitions ni le JSON final",
-        "db_max_commands": "3",
-    },
-}
 
 
 def build_logs_block(python_exe: str, workspace_dir: str) -> str:
@@ -346,50 +278,6 @@ def server_log_contains(client: str, item: dict, proof: str) -> bool:
     report_token_usage(item.get("id", "")[:80], "cucumber-log-check", "sonnet", usage, len(prompt), returncode, "")
     found = " ".join(re.findall(r"```(?:text)?\s*(.*?)```", output or "", flags=re.S))
     return returncode == 0 and cucumber_diagnostic._normalize(proof) in cucumber_diagnostic._normalize(found)
-
-
-def build_db_block(db_schema: str, python_exe: str, workspace_dir: str, step: str = "default",
-                   profile: str = "") -> str:
-    """
-    Bloc de prompt de l'accès base en lecture seule ('' si non demandé ou non configuré). `profile` « cucumber » :
-    base de l'environnement où sont joués les tests (CUCUMBER_DB_*, à défaut DB_*), passée à l'agent par --profile.
-    """
-    previous = db_tools.set_profile(profile)
-    try:
-        return _build_db_block(db_schema, python_exe, workspace_dir, step, profile)
-    finally:
-        db_tools.set_profile(previous)
-
-
-def _build_db_block(db_schema: str, python_exe: str, workspace_dir: str, step: str, profile: str) -> str:
-    if not db_schema and db_tools.config_prefix() != "DB_":
-        # Base Cucumber renseignée : son schéma par défaut (CUCUMBER_DB_SCHEMA)
-        db_schema = db_tools.get_db_config()["schema"]
-    if not db_schema:
-        return ""
-    if not db_tools.is_valid_identifier(db_schema):
-        print(f"[BDD] ⚠️ Schéma '{db_schema}' invalide : l'agent travaillera sans la base.")
-        return ""
-    if not db_tools.is_db_configured():
-        print(f"[BDD] ⚠️ Schéma '{db_schema}' demandé mais connexion non configurée (onglet Configuration) : "
-              f"l'agent travaillera sans la base.")
-        return ""
-    db_type = db_tools.get_db_config()["type"]
-    print(f"[BDD] Accès en lecture seule activé : {db_tools.describe_db_target()}, schéma {db_schema}.")
-    db_cli = os.path.join(SOCLE_DIR, "db_tools.py")
-    base_cmd = f'"{python_exe}" "{db_cli}" --schema {db_schema}' + (f" --profile {profile}" if profile else "")
-    if db_type == "sqlserver":
-        schema_hint = f"Sous SQL Server, préfixe les tables par le schéma ({db_schema}.NOM_TABLE)."
-    else:
-        schema_hint = f"Les noms de tables non qualifiés sont résolus dans le schéma {db_schema}."
-    wording = dict(DB_BLOCK_WORDING.get(step, DB_BLOCK_WORDING["default"]))
-    wording.setdefault("db_error_rule", "Si une commande renvoie DB_ERROR=…, n'insiste pas : poursuis sans la base "
-                                        "et signale-le en une ligne.")
-    if step == "generate-cucumber-client":
-        # Les lots prouvent l'existence des données et choisissent les codes des jeux de données en base
-        wording["db_max_commands"] = str(_env_int("CUCUMBER_DB_MAX_COMMANDS", 20))
-    return "\n" + render_prompt("db_access", db_type=db_type, db_schema=db_schema, base_cmd=base_cmd,
-                                schema_hint=schema_hint, **wording)
 
 
 def run_assistant(question: str, answer_file: str) -> int:
@@ -503,71 +391,6 @@ def run_restore_config(client: str, source_schema: str, target_schema: str, back
 REVIEW_TOOLS = ["Read", "Grep", "Glob"]
 
 
-def bitbucket_base_url(repo_url: str = "") -> str:
-    """BITBUCKET_URL du .env, à défaut l'hôte de l'URL de dépôt fournie."""
-    configured = os.getenv("BITBUCKET_URL", "").strip().rstrip("/")
-    if configured or not repo_url.startswith("http"):
-        return configured
-    parts = urlsplit(repo_url)
-    return f"{parts.scheme}://{parts.netloc}"
-
-
-ODATIO_VERSION = re.compile(r"^\d{2}\.\d+(\.\d+)*$")
-
-
-def odatio_version_from_pom(text: str) -> tuple:
-    """
-    (version d'Odatio, d'où elle vient) lue dans un pom.xml : propriété odatio / kis (…version), puis version du
-    parent Odatio / KIS, puis version du projet — retenue seulement si elle a la forme d'une version Odatio (26.16,
-    25.4.2) : la version propre d'un dépôt (1.0.0) n'est pas celle de la plateforme. ('', raison) sinon.
-    """
-    try:
-        root = ET.fromstring(text)
-    except ET.ParseError as e:
-        return "", f"pom.xml illisible ({e})"
-    tag = lambda node: node.tag.rsplit("}", 1)[-1]  # noqa: E731
-    clean = lambda v: (v or "").strip().replace("-SNAPSHOT", "")  # noqa: E731
-    candidates = []
-    for props in (n for n in root if tag(n) == "properties"):
-        for prop in props:
-            if re.search(r"(odatio|kis).*version|version.*(odatio|kis)", tag(prop), re.I):
-                candidates.append((clean(prop.text), f"propriété <{tag(prop)}>"))
-    parent = next((n for n in root if tag(n) == "parent"), None)
-    if parent is not None:
-        fields = {tag(n): (n.text or "") for n in parent}
-        if re.search(r"odatio|kis", fields.get("groupId", "") + fields.get("artifactId", ""), re.I):
-            candidates.append((clean(fields.get("version")), f"parent {fields.get('artifactId', '')}"))
-    own = next((n for n in root if tag(n) == "version"), None)
-    if own is not None:
-        candidates.append((clean(own.text), "version du projet"))
-    for version, origin in candidates:
-        if ODATIO_VERSION.match(version or ""):
-            return version, origin
-    seen = ", ".join(f"{v or '?'} ({o})" for v, o in candidates) or "aucune"
-    return "", f"aucune version au format Odatio (ex. 26.16) dans le pom ; vu : {seen}"
-
-
-def detect_odatio_version(std_repo_path: str) -> str:
-    """
-    Version d'Odatio du dépôt Standard (pom.xml racine, voir odatio_version_from_pom) ; ODATIO_VERSION du .env
-    prime. « dev » si elle est introuvable : aucune comparaison de version n'est alors faite.
-    """
-    forced = os.getenv("ODATIO_VERSION", "").strip()
-    if forced:
-        print(f"[VERSION ODATIO] {forced} (ODATIO_VERSION du .env)")
-        return forced
-    # Sans copie locale (Standard lu dans Bitbucket) : aucun pom lu, surtout pas celui du dossier courant
-    pom_path = os.path.join(std_repo_path, "pom.xml") if std_repo_path else ""
-    if pom_path and os.path.exists(pom_path):
-        version, origin = odatio_version_from_pom(_read_text(pom_path))
-        if version:
-            print(f"[VERSION ODATIO] {version} ({origin} du pom du Standard)")
-            return version
-        print(f"[VERSION ODATIO] ⚠️ {origin} — renseignez ODATIO_VERSION (onglet Configuration) ; comparaisons de "
-              f"version désactivées.")
-    return "dev"
-
-
 def client_standard_version(client: str, client_root: str, std_root: str, fallback: str) -> str:
     """
     Version du Standard propre au client (tools/standard_version) : détectée dans le code de son application
@@ -599,20 +422,6 @@ def client_standard_version(client: str, client_root: str, std_root: str, fallba
     return fallback
 
 
-def _force_rmtree(path: str) -> None:
-    """Supprime un dossier, y compris les fichiers en lecture seule d'un .git sous Windows."""
-    def make_writable(func, target, _exc):
-        os.chmod(target, 0o700)
-        func(target)
-    shutil.rmtree(path, **({"onexc": make_writable} if sys.version_info >= (3, 12) else {"onerror": make_writable}))
-
-
-def _git_out(repo_dir: str, *args: str) -> str:
-    # Sortie de git en UTF-8 (messages de commit accentués), pas dans l'encodage de la console Windows
-    return subprocess.run(["git", "-C", repo_dir, *args], capture_output=True, text=True, encoding="utf-8",
-                          errors="replace").stdout.strip()
-
-
 def tests_fingerprint(worktree: str) -> str:
     """
     Empreinte des fichiers de test du worktree (src/test) : commit courant, fichiers modifiés ou nouveaux et leur
@@ -629,447 +438,6 @@ def tests_fingerprint(worktree: str) -> str:
             with open(path, "rb") as f:
                 digest.update(f.read())
     return digest.hexdigest()
-
-
-def _same_git_url(a: str, b: str) -> bool:
-    normalize = lambda url: re.sub(r"\.git$", "", url.strip().rstrip("/")).lower()
-    return normalize(a) == normalize(b)
-
-
-def cucumber_std_clone_dir(workspace_dir: str, clone_url: str) -> str:
-    """Un clone par dépôt : .tmp/cucumber_std/<slug-projet>_<slug-dépôt>."""
-    path = urlsplit(clone_url).path if "://" in clone_url else clone_url.split(":", 1)[-1]
-    parts = [p for p in path.split("/") if p and p != "scm"]
-    slug = lambda text: re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-") or "x"
-    repo = re.sub(r"\.git$", "", parts[-1]) if parts else "cucumber"
-    project = parts[-2] if len(parts) >= 2 else "std"
-    return os.path.join(workspace_dir, ".tmp", "cucumber_std", f"{slug(project)}_{slug(repo)}")
-
-
-def checkout_cucumber_std_ref(repo_dir: str, odatio_version: str) -> str:
-    """
-    Détache le clone sur la référence de la version du Standard : release/<v>, v<v>, <v> (branches distantes, puis
-    tags) ; absente : version existante la plus proche INFÉRIEURE, avec un avertissement explicite — jamais de repli
-    silencieux sur master. Seule une version illisible (« dev ») prend origin/dev, main, master, HEAD, signalé.
-    Jamais une branche locale, qui peut être en retard sur le distant. Renvoie la référence retenue ('' si aucune).
-    """
-    clean_ver = odatio_version.replace("-SNAPSHOT", "").strip()
-    if standard_version.normalize(clean_ver)[0]:
-        picked = client_version.cucumber_std_ref(clean_ver, client_version.cucumber_std_names(repo_dir))
-        if picked["avertissement"]:
-            print(f"[CUCUMBER STD] ⚠️ {picked['avertissement']}")
-        if not picked["ref"]:
-            return ""
-        name = picked["ref"]
-        candidates = [f"origin/{name}", f"refs/tags/{name}"]
-    else:
-        print(f"[CUCUMBER STD] ⚠️ Version du Standard illisible ({odatio_version or 'vide'}) : branche de "
-              f"développement du Cucumber Standard retenue (dev, main, master).")
-        candidates = ["origin/dev", "origin/main", "origin/master", "origin/HEAD"]
-    for ref in candidates:
-        if not _git_out(repo_dir, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"):
-            continue
-        res = subprocess.run(["git", "-C", repo_dir, "checkout", "-q", "--force", "--detach", ref],
-                             capture_output=True, text=True)
-        if res.returncode == 0:
-            return ref.removeprefix("refs/tags/")
-        print(f"⚠️ Checkout de '{ref}' impossible : {res.stderr.strip()[:300]}")
-    return ""
-
-
-def ensure_cucumber_std_repo(repo_url: str, odatio_version: str) -> tuple:
-    """
-    Prépare le dépôt Cucumber Standard et renvoie (dossier, "référence @ commit court") ; ("", "") si indisponible.
-    - chemin local d'un dépôt git : utilisé tel quel (fetch seulement, aucun checkout) ;
-    - URL (navigation Bitbucket, clonable ou projet Bitbucket) : un clone par dépôt, recloné si son origin diffère,
-      puis fetch et checkout détaché de la référence distante correspondant à la version Odatio.
-    """
-    repo_url = (repo_url or "").strip()
-    if not repo_url:
-        return "", ""
-
-    bitbucket_token = os.getenv("BITBUCKET_HTTP_TOKEN", "").strip()
-    git_env = os.environ.copy()
-    git_cmd_extra = ["-c", f"http.extraHeader=Authorization: Bearer {bitbucket_token}"] if bitbucket_token else []
-
-    def fetch(repo_dir: str) -> None:
-        res = subprocess.run(["git"] + git_cmd_extra + ["-C", repo_dir, "fetch", "--all", "--tags", "--force", "--prune"],
-                             capture_output=True, text=True, env=git_env)
-        if res.returncode != 0:
-            print(f"⚠️ git fetch du Cucumber Standard en échec : {res.stderr.strip()[:300]}")
-
-    def report(repo_dir: str, ref: str) -> tuple:
-        label = f"{ref} @ {_git_out(repo_dir, 'rev-parse', '--short', 'HEAD')}"
-        print(f"[CUCUMBER STD] Dossier : {repo_dir}")
-        print(f"{cucumber_tools.STD_REF_LOG} {label}")
-        print(f"==================================================\n")
-        return repo_dir, label
-
-    print(f"\n==================================================")
-    print(f"[CUCUMBER STD] Préparation des tests Cucumber Standard (Version cible Odatio : {odatio_version})...")
-
-    # Chemin local : le dépôt de l'utilisateur n'est ni cloné ni basculé de branche
-    if not repo_url.startswith(("http://", "https://", "git@", "file://")):
-        local_dir = os.path.abspath(repo_url)
-        if not os.path.exists(os.path.join(local_dir, ".git")):
-            print(f"❌ Dépôt Cucumber Standard '{repo_url}' : ni URL ni dossier git local.")
-            return "", ""
-        print(f"📂 Dépôt Cucumber Standard local utilisé tel quel : {local_dir}")
-        fetch(local_dir)
-        branch = _git_out(local_dir, "rev-parse", "--abbrev-ref", "HEAD")
-        return report(local_dir, branch if branch and branch != "HEAD" else "HEAD détaché")
-
-    clean_url = repo_url.split("/browse")[0].rstrip("/")
-    # URL de navigation Bitbucket (.../projects/COMPONENT-QA/repos/cucumber) -> URL clonable (.../scm/component-qa/cucumber.git)
-    web_repo = re.match(r"^(https?://[^/]+)/projects/([^/]+)/repos/([^/]+)$", clean_url)
-    if web_repo:
-        clean_url = f"{web_repo.group(1)}/scm/{web_repo.group(2).lower()}/{web_repo.group(3)}.git"
-    bitbucket_url = bitbucket_base_url(clean_url)
-
-    if "/projects/" in clean_url and "/repos/" not in clean_url and not clean_url.endswith(".git"):
-        project_key = clean_url.split("/")[-1].upper()
-        print(f"[CUCUMBER STD] Recherche du dépôt Cucumber dans le projet '{project_key}'...")
-        api_url = f"{bitbucket_url}/rest/api/1.0/projects/{project_key}/repos?limit=100"
-        headers = {"Authorization": f"Bearer {bitbucket_token}"} if bitbucket_token else {}
-        try:
-            res = requests.get(api_url, headers=headers, timeout=10)
-            repos = res.json().get("values", []) if res.status_code == 200 else []
-        except Exception as e:
-            print(f"[CUCUMBER STD] Erreur API Bitbucket ({e})")
-            return "", ""
-        cuc_repo = (next((r["slug"] for r in repos if "cucumber" in r["slug"].lower()), None)
-                    or next((r["slug"] for r in repos if "qa" in r["slug"].lower()), None))
-        if not cuc_repo:
-            print(f"[CUCUMBER STD] Aucun dépôt Cucumber trouvé dans le projet {project_key}.")
-            return "", ""
-        clean_url = f"{bitbucket_url}/scm/{project_key.lower()}/{cuc_repo}.git"
-        print(f"[CUCUMBER STD] Dépôt trouvé via API Bitbucket : {clean_url}")
-
-    if not clean_url.endswith(".git") and "/scm/" in clean_url:
-        clean_url += ".git"
-    print(f"URL Git : {clean_url}")
-
-    workspace_dir = os.path.dirname(os.path.abspath(__file__))
-    root_dir = os.path.join(workspace_dir, ".tmp", "cucumber_std")
-    target_dir = cucumber_std_clone_dir(workspace_dir, clean_url)
-    # Ancienne disposition : un clone unique directement dans .tmp/cucumber_std
-    if os.path.exists(os.path.join(root_dir, ".git")):
-        print(f"🧹 Suppression de l'ancien clone unique {root_dir}...")
-        _force_rmtree(root_dir)
-
-    if os.path.exists(os.path.join(target_dir, ".git")):
-        origin = _git_out(target_dir, "remote", "get-url", "origin")
-        if not _same_git_url(origin, clean_url):
-            print(f"🧹 Clone {target_dir} issu d'un autre dépôt ({origin or 'origin absent'}) : reclonage.")
-            _force_rmtree(target_dir)
-
-    if os.path.exists(os.path.join(target_dir, ".git")):
-        print(f"🔄 Mise à jour du dépôt Cucumber Standard dans {target_dir}...")
-        fetch(target_dir)
-    else:
-        if os.path.exists(target_dir):
-            _force_rmtree(target_dir)
-        print(f"📥 Clonage du dépôt Cucumber Standard depuis {clean_url} dans {target_dir}...")
-        os.makedirs(os.path.dirname(target_dir), exist_ok=True)
-        res = subprocess.run(["git"] + git_cmd_extra + ["clone", "--no-checkout", clean_url, target_dir],
-                             capture_output=True, text=True, env=git_env)
-        if res.returncode != 0:
-            print(f"❌ Échec du clonage Cucumber Standard : {res.stderr.strip()}")
-            return "", ""
-
-    # Cucumber Standard : copie de lecture, aucune adresse d'envoi
-    cucumber_delivery.disable_push(target_dir)
-    ref = checkout_cucumber_std_ref(target_dir, odatio_version)
-    if not ref:
-        print("❌ Aucune référence distante exploitable (version Odatio, dev, main, master) dans le Cucumber Standard.")
-        return "", ""
-    return report(target_dir, ref)
-
-
-BACKUP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".tmp", "sauvegardes")
-
-
-def update_clone(repo_dir: str, name: str, git_cmd_extra: list = (), git_env: dict = None) -> tuple:
-    """
-    Mise à jour d'une copie de code par « git fetch » (jamais de pull : les lectures se font sur les références
-    distantes, la branche locale et l'arbre de travail ne sont pas touchés). Les commits locaux non poussés sont
-    d'abord sauvegardés dans un bundle (.tmp/sauvegardes/<dépôt>-<date>.bundle). Renvoie (succès, message).
-    """
-    unpushed = subprocess.run(["git", "-C", repo_dir, "log", "--branches", "--not", "--remotes", "--oneline"],
-                              capture_output=True, text=True).stdout.strip().splitlines()
-    saved = ""
-    if unpushed:
-        os.makedirs(BACKUP_DIR, exist_ok=True)
-        saved = os.path.join(BACKUP_DIR, f"{name}-{time.strftime('%Y%m%d-%H%M%S')}.bundle")
-        bundle = subprocess.run(["git", "-C", repo_dir, "bundle", "create", saved, "--branches", "--not",
-                                 "--remotes"], capture_output=True, text=True)
-        if bundle.returncode != 0:
-            return False, (f"{name} : sauvegarde des {len(unpushed)} commit(s) local(aux) non poussé(s) impossible "
-                           f"({bundle.stderr.strip()[:200]}) : dépôt non mis à jour")
-    res = subprocess.run(["git", *git_cmd_extra, "-C", repo_dir, "fetch", "--prune", "origin"],
-                         capture_output=True, text=True, env=git_env)
-    backup = f" ; {len(unpushed)} commit(s) local(aux) non poussé(s) sauvegardé(s) dans {saved}" if saved else ""
-    if res.returncode != 0:
-        return False, f"Erreur fetch sur {name} : {res.stderr.strip()[:300]}{backup}"
-    synced = sync_working_copy(repo_dir)
-    return True, f"{name} mis à jour (fetch){backup}" + (f" ; {synced}" if synced else "") + "."
-
-
-def sync_working_copy(repo_dir: str, default_branch: str = "integration") -> str:
-    """
-    Fichiers de la copie de l'agent remis à jour quand c'est sans risque (Claude lit le code dans ces fichiers) :
-    - modifications non commitées ou fusion en cours : rien n'est touché ;
-    - branche suivie en retard : avance rapide (merge --ff-only), jamais de fusion ni de réécriture ;
-    - branche de travail non suivie (ex. SPEC-1996_dev_…) : la copie revient sur la branche d'intégration suivie,
-      la branche et ses commits restent intacts (et déjà sauvegardés dans un bundle s'ils ne sont pas poussés).
-    Renvoie ce qui a été fait ('' si rien).
-    """
-    def git(*args):
-        return subprocess.run(["git", "-C", repo_dir, *args], capture_output=True, text=True)
-    if git("status", "--porcelain", "--untracked-files=no").stdout.strip() or \
-            git("rev-parse", "-q", "--verify", "MERGE_HEAD").returncode == 0:
-        return ""
-    branch = git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
-    if git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}").returncode != 0:
-        if branch == "HEAD" or git("rev-parse", "-q", "--verify", f"origin/{default_branch}").returncode != 0:
-            return ""
-        exists = git("rev-parse", "-q", "--verify", f"refs/heads/{default_branch}").returncode == 0
-        done = git("checkout", "-q", default_branch) if exists else \
-            git("checkout", "-q", "-b", default_branch, "--track", f"origin/{default_branch}")
-        if done.returncode != 0:
-            return ""
-        if exists:
-            git("branch", "-q", f"--set-upstream-to=origin/{default_branch}")
-        moved = f"copie remise sur {default_branch} (la branche {branch} est conservée)"
-    else:
-        moved = ""
-    behind = git("rev-list", "--count", "HEAD..@{u}").stdout.strip()
-    if behind.isdigit() and int(behind) and git("merge", "-q", "--ff-only", "@{u}").returncode == 0:
-        return (moved + " ; " if moved else "") + f"{behind} commit(s) appliqué(s) en avance rapide"
-    return moved
-
-
-def fetch_age_minutes(repo_dir: str):
-    """Minutes depuis le dernier fetch du clone (date de .git/FETCH_HEAD), None s'il n'a jamais été récupéré."""
-    head = os.path.join(repo_dir, ".git", "FETCH_HEAD")
-    return (time.time() - os.path.getmtime(head)) / 60 if os.path.exists(head) else None
-
-
-def std_fetch_max_age() -> float:
-    """
-    Âge maximal (minutes) d'un fetch du Standard réutilisé sans nouveau fetch : STD_FETCH_MAX_AGE_MINUTES (1440, un
-    jour : le code du Standard lu par l'analyse n'a pas besoin d'être à la minute ; 0 = toujours récupérer).
-    """
-    try:
-        return max(0.0, float(os.getenv("STD_FETCH_MAX_AGE_MINUTES", "1440")))
-    except ValueError:
-        return 1440.0
-
-
-def fetch_workers() -> int:
-    """Récupérations Git menées en parallèle (GIT_FETCH_WORKERS, 8)."""
-    try:
-        return max(1, int(os.getenv("GIT_FETCH_WORKERS", "8")))
-    except ValueError:
-        return 8
-
-
-def ensure_local_repo(repo_input: str, repo_label: str, only: list = None) -> str:
-    """
-    Si repo_input est une URL de projet Bitbucket, interroge l'API REST 
-    pour récupérer et cloner / mettre à jour TOUS les dépôts du projet.
-    """
-    if not repo_input or repo_input == "STD_ONLY":
-        return ""
-
-    if not (repo_input.startswith("http://") or repo_input.startswith("https://") or repo_input.startswith("git@")):
-        print(f"[LOCAL REPO] Utilisation du chemin local fourni pour '{repo_label}' : {repo_input}")
-        return repo_input
-
-    workspace_dir = os.path.dirname(os.path.abspath(__file__))
-    tmp_dir = os.path.join(workspace_dir, ".tmp")
-    os.makedirs(tmp_dir, exist_ok=True)
-
-    bitbucket_token = os.getenv("BITBUCKET_HTTP_TOKEN", "").strip()
-    bitbucket_url = bitbucket_base_url(repo_input)
-
-    git_env = os.environ.copy()
-    git_cmd_extra = ["-c", f"http.extraHeader=Authorization: Bearer {bitbucket_token}"] if bitbucket_token else []
-
-    if "/projects/" in repo_input and "/repos/" not in repo_input and not repo_input.endswith(".git"):
-        project_key = repo_input.rstrip("/").split("/")[-1].upper()
-        target_dir = os.path.join(tmp_dir, f"{repo_label}_{project_key}")
-        os.makedirs(target_dir, exist_ok=True)
-
-        print(f"\n==================================================")
-        print(f"[API BITBUCKET] Interrogation du projet '{project_key}' sur {bitbucket_url}...")
-
-        api_url = f"{bitbucket_url}/rest/api/1.0/projects/{project_key}/repos"
-        headers = {"Authorization": f"Bearer {bitbucket_token}"} if bitbucket_token else {}
-
-        repos_to_clone = []
-        try:
-            # Toutes les pages : un projet peut compter plus de 100 dépôts (le Standard en a plus de 170)
-            start = 0
-            while True:
-                res = requests.get(api_url, headers=headers, params={"start": start, "limit": 100}, timeout=10)
-                if res.status_code != 200:
-                    print(f"[API BITBUCKET] Code retour {res.status_code}"
-                          + (", passage sur la liste de secours." if not repos_to_clone else
-                             f" sur la page {start} : liste partielle."))
-                    break
-                data = res.json()
-                repos_to_clone += [repo["slug"] for repo in data.get("values", [])]
-                if data.get("isLastPage", True):
-                    break
-                start = data.get("nextPageStart", start + 100)
-            if repos_to_clone:
-                print(f"[API BITBUCKET] {len(repos_to_clone)} dépôt(s) trouvé(s) pour {project_key} : {', '.join(repos_to_clone)}")
-        except Exception as e:
-            print(f"[API BITBUCKET] Erreur API ({e}), passage sur la liste de secours.")
-
-        if not repos_to_clone:
-            repos_to_clone = [
-                f"odatio-{project_key.lower()}",
-                f"odatio-ui-{project_key.lower()}",
-                "studio",
-                "wms-goodsin-backend",
-                "wms-preparation-backend",
-                "traduction"
-            ]
-            print(f"[API BITBUCKET] Liste de secours chargée : {', '.join(repos_to_clone)}")
-
-        print(f"[GIT REPO] Dossier cible local : {target_dir}")
-        print(f"==================================================\n")
-
-        skipped = []
-        if only is not None:
-            print(f"[GIT REPO] {len(set(only) & set(repos_to_clone))} dépôt(s) sur {len(repos_to_clone)} utiles au client "
-                  f"(modules déployés et dépôts transverses) : les autres ne sont ni clonés ni récupérés.")
-            repos_to_clone = [r for r in repos_to_clone if r in set(only)]
-        def sync_one(idx: int, repo_name: str) -> str:
-            """Fetch ou clonage d'un dépôt ; renvoie les lignes de journal (affichées dans l'ordre)."""
-            repo_dir = os.path.join(target_dir, repo_name)
-            clone_url = f"{bitbucket_url}/scm/{project_key}/{repo_name}.git"
-            if os.path.exists(os.path.join(repo_dir, ".git")):
-                ok, message = update_clone(repo_dir, repo_name, git_cmd_extra, git_env)
-                lines = (f"[{idx}/{len(repos_to_clone)}] 🔄 Mettre à jour {repo_name} dans {repo_dir}...\n"
-                         f"     {'✅' if ok else '⚠️'} {message}")
-            else:
-                cmd = ["git"] + git_cmd_extra + ["clone", clone_url, repo_dir]
-                res_clone = subprocess.run(cmd, capture_output=True, text=True, env=git_env)
-                lines = (f"[{idx}/{len(repos_to_clone)}] 📥 Clonage de {repo_name} depuis {clone_url}...\n     "
-                         + (f"✅ {repo_name} cloné avec succès." if res_clone.returncode == 0 else
-                            f"❌ Échec clonage {repo_name} : {res_clone.stderr.strip()}"))
-            if repo_label == "std" or "cucumber" not in repo_name.lower():
-                # Copie de lecture (code client, Standard, Studio) : aucune adresse d'envoi
-                cucumber_delivery.disable_push(repo_dir)
-            return lines
-
-        todo = []
-        for idx, repo_name in enumerate(repos_to_clone, 1):
-            repo_dir = os.path.join(target_dir, repo_name)
-            age = fetch_age_minutes(repo_dir) if os.path.exists(os.path.join(repo_dir, ".git")) else None
-            if repo_label == "std" and age is not None and age < std_fetch_max_age():
-                # Standard récupéré récemment : pas de nouveau fetch (STD_FETCH_MAX_AGE_MINUTES, 0 = toujours)
-                skipped.append(repo_name)
-                continue
-            todo.append((idx, repo_name))
-        # Récupérations en parallèle (réseau) ; journal dans l'ordre des dépôts
-        from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=min(fetch_workers(), max(1, len(todo)))) as pool:
-            for lines in pool.map(lambda item: sync_one(*item), todo):
-                print(lines)
-
-        if skipped:
-            print(f"[GIT REPO] {len(skipped)} dépôt(s) du Standard récupéré(s) il y a moins de "
-                  f"{std_fetch_max_age() / 60:g} h : fetch sauté (STD_FETCH_MAX_AGE_MINUTES, 0 pour toujours "
-                  f"récupérer).")
-        print(f"\n[GIT COMPLETE] Traitement terminé pour le projet {project_key}.\n")
-        return target_dir
-
-    else:
-        clean_name = repo_input.rstrip("/").split("/")[-1].replace(".git", "")
-        target_dir = os.path.join(tmp_dir, f"{repo_label}_{clean_name}")
-
-        print(f"\n[GIT SINGLE REPO] Traitement du dépôt unique : {repo_input}")
-        if os.path.exists(target_dir) and os.path.exists(os.path.join(target_dir, ".git")):
-            print(f"🔄 Mettre à jour le dépôt local {repo_label} : {target_dir}")
-            ok, message = update_clone(target_dir, clean_name, git_cmd_extra, git_env)
-            print(f"{'✅' if ok else '⚠️'} {message}")
-        else:
-            if os.path.exists(target_dir):
-                shutil.rmtree(target_dir, ignore_errors=True)
-            print(f"📥 Clonage automatique du dépôt {repo_label} depuis {repo_input}...")
-            cmd = ["git"] + git_cmd_extra + ["clone", repo_input, target_dir]
-            res_clone = subprocess.run(cmd, capture_output=True, text=True, env=git_env)
-            if res_clone.returncode == 0:
-                print(f"✅ {clean_name} cloné avec succès.")
-            else:
-                print(f"❌ Erreur lors du clonage de {repo_input} :\n{res_clone.stderr.strip()}")
-                return repo_input
-        if repo_label == "std" or "cucumber" not in clean_name.lower():
-            cucumber_delivery.disable_push(target_dir)
-        return target_dir
-
-
-def cadrage_remote_plan(std_key: str, client_repo_arg: str, http=None) -> dict:
-    """
-    Cadrage d'un ticket client (ni socle seul, ni Cucumber) : Standard et dépôt client lus dans Bitbucket par l'API
-    REST (tools/bitbucket_code.py), sans clone ni fetch. {"remote": bool, "motif": raison du mode local,
-    "std": RemoteStandard, "client_project", "client_repos": [dépôts] ou None (projet entier)}. Configuration
-    incomplète, dépôt client sans adresse Bitbucket ou API en erreur : mode local (copies d'ensure_local_repo).
-    """
-    from agent_socle import bitbucket_code
-    base = os.getenv("BITBUCKET_URL", "").strip().rstrip("/")
-    local = lambda motif: {"remote": False, "motif": motif}  # noqa: E731
-    if not base:
-        return local("BITBUCKET_URL non renseignée")
-    if not os.getenv("BITBUCKET_HTTP_TOKEN", "").strip():
-        return local("BITBUCKET_HTTP_TOKEN non renseigné")
-    if not std_key:
-        return local("BITBUCKET_STD_REPO_PATH n'est pas l'adresse d'un projet Bitbucket (…/projects/CLE)")
-    client_project, client_repos = bitbucket_code.client_source(client_repo_arg, base)
-    if not client_project:
-        return local(f"dépôt client « {client_repo_arg or 'non renseigné'} » sans adresse Bitbucket de {base} "
-                     f"(URL de projet ou de dépôt, ou remote origin d'un seul projet)")
-    std = bitbucket_std.RemoteStandard(std_key, http=http)
-    client = bitbucket_std.RemoteStandard(client_project, http=http)
-    try:
-        if not std.repos():
-            return local(f"projet du Standard {std_key} vide ou absent dans Bitbucket")
-        found = client.repos()
-    except bitbucket_std.BitbucketUnavailable as exc:
-        return local(f"API Bitbucket indisponible ({exc})")
-    missing = [r for r in (client_repos or []) if r not in found]
-    if not found or missing:
-        return local(f"dépôt(s) client absent(s) du projet {client_project} dans Bitbucket "
-                     f"({', '.join(missing) or 'aucun dépôt'})")
-    return {"remote": True, "motif": "", "std": std, "client_project": client_project, "client_repos": client_repos}
-
-
-def cadrage_remote_scope(plan: dict, odatio_version: str, python_exe: str, workspace_dir: str) -> str:
-    """Consigne d'accès au code du cadrage lu dans Bitbucket (bloc bitbucket_code_cadrage) et lignes de journal."""
-    from tools.standard_version import normalize, std_refs
-    cli = f'"{python_exe}" "{os.path.join(SOCLE_DIR, "bitbucket_code.py")}"'
-    std_project = plan["std"].project
-    # Version du Standard : ODATIO_VERSION (références de version) sinon branche par défaut, comme la copie locale
-    std_candidates = list(std_refs(odatio_version, ("HEAD",)))
-    version = normalize(odatio_version)[0]
-    std_ref_label = (f"version {version} : {', '.join(std_candidates[:-1])}, à défaut branche par défaut"
-                     if version else "branche par défaut de chaque dépôt")
-    repos = plan["client_repos"]
-    client_repos = f"dépôt(s) {', '.join(repos)}" if repos else "tous les dépôts du projet"
-    client_cli = f"{cli} --project {plan['client_project']} --branches origin/integration"
-    print(f"[CODE CADRAGE] Standard : Bitbucket REST, projet {std_project}, {std_ref_label}.")
-    print(f"[CODE CADRAGE] Client : Bitbucket REST, projet {plan['client_project']}, {client_repos}, branche "
-          f"integration.")
-    print("[CODE CADRAGE] Aucune copie locale (ni clone, ni fetch) pour le cadrage ; le patch copiera le dépôt à "
-          "modifier, comme avant.")
-    return render_prompt("bitbucket_code_cadrage", std_project=std_project, std_ref_label=std_ref_label,
-                         std_cli=f"{cli} --project {std_project} --branches {','.join(std_candidates)}",
-                         client_project=plan["client_project"], client_repos=client_repos,
-                         client_cli=client_cli + (f" --repos {','.join(repos)}" if repos else ""))
 
 
 POSTMERGE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".tmp", "postmerge")
@@ -1222,6 +590,9 @@ def main():
     if args.step == "review-pr":
         # Revue de PR : agent-revue-pr (AGENT_REVUE_PR_DIR), mêmes arguments
         sys.exit(cli.deleguer("revue-pr", sys.argv[1:]))
+    if args.step in ("cadrage", "refine", "epic-cadrage", "epic-sync", "patch"):
+        # Lancement : agent-lancement (AGENT_LANCEMENT_DIR), mêmes arguments
+        sys.exit(cli.deleguer("lancement", sys.argv[1:]))
     if args.step in ("besoin", "cadrage-reponses"):
         # Intégration : agent-integration (AGENT_INTEGRATION_DIR), mêmes arguments
         sys.exit(cli.deleguer("integration", sys.argv[1:]))
@@ -1263,11 +634,6 @@ def main():
     target_project = args.project.strip().upper()
     flush_knowledge_outbox()
 
-    # Création des tâches d'un découpage déjà rédigé (ex. création Jira échouée) : sans relancer l'agent
-    if args.step == "epic-sync":
-        print(f"=== Création des tâches de l'épopée {target_issue} à partir du découpage existant ===")
-        sys.exit(0 if sync_epic_tasks(target_issue, target_project, load_epic_manifest(target_issue),
-                                      component=args.jira_component, issue_type=args.epic_task_type) else 1)
 
     workspace_dir = os.path.dirname(os.path.abspath(__file__))
     python_exe = sys.executable
@@ -1302,11 +668,6 @@ def main():
         # Bitbucket non configuré ou illisible : copies locales comme avant, mode annoncé dans le journal
         client_repo_arg = args.client_repo or os.getenv("BITBUCKET_CLIENT_REPO_PATH", "")
         cadrage_remote = {}
-        if args.step == "cadrage" and not is_cucumber_client and not std_only_ticket:
-            cadrage_remote = cadrage_remote_plan(std_key, client_repo_arg)
-            if not cadrage_remote["remote"]:
-                print(f"[CODE CADRAGE] Mode local : {cadrage_remote['motif']} ; Standard et client lus dans des "
-                      f"copies locales (ensure_local_repo).")
         if remote_code:
             STD_READER[0] = bitbucket_std.RemoteStandard(std_key)
             local_std_repo = os.path.join(workspace_dir, ".tmp", f"std_{std_key}_travail")
@@ -1317,9 +678,6 @@ def main():
             STD_READER[0] = bitbucket_std.RemoteStandard(std_key)
             local_std_repo = os.path.join(workspace_dir, ".tmp", f"std_{std_key}")
             print(f"[STANDARD] Code du Standard lu dans Bitbucket (projet {std_key}, API REST) : aucun fetch préalable.")
-        elif cadrage_remote.get("remote"):
-            STD_READER[0] = cadrage_remote["std"]
-            local_std_repo = ""
         else:
             local_std_repo = ensure_local_repo(std_repo_arg, "std")
             STD_READER[0] = local_std_repo
@@ -1354,16 +712,8 @@ def main():
                 repo_scope = render_prompt("std_bitbucket_code", cli=code_cli, work_root=local_std_repo)
         else:
             branch_rule = f"Projet '{target_project}' : la branche de base sur le dépôt client est 'integration'. Branche de travail : '{target_issue}_dev_...'."
-            if cadrage_remote.get("remote"):
-                local_client_repo = ""
-                repo_scope = cadrage_remote_scope(cadrage_remote, odatio_version, python_exe, workspace_dir)
-            else:
-                local_client_repo = ensure_local_repo(client_repo_arg, "client")
-                repo_scope = f"Explore le code source dans le socle '{local_std_repo}' et dans le dépôt client '{local_client_repo}'."
-                if cadrage_remote:
-                    print(f"[CODE CADRAGE] Standard : local, {local_std_repo}, branche de chaque copie locale.")
-                    print(f"[CODE CADRAGE] Client : local, {local_client_repo}, branche de chaque copie locale "
-                          f"(base attendue : integration).")
+            local_client_repo = ensure_local_repo(client_repo_arg, "client")
+            repo_scope = f"Explore le code source dans le socle '{local_std_repo}' et dans le dépôt client '{local_client_repo}'."
 
         # 4. Version du Standard propre au client Cucumber (profil client), puis Standard et Cucumber Standard placés
         # sur la référence de cette version
@@ -1438,25 +788,8 @@ def main():
 
     cadrage_file = f"{target_issue}-cadrage.md"
     release_note_file = f"{target_issue}-release-note.md"
-    # Patch et révision : toujours l'analyse COMPLÈTE — fichier local validé, sinon reconstituée depuis Jira
-    # (commentaires « Analyse de l'agent » réassemblés, hors de JIRA_CONTEXT_MAX_CHARS) ; partie manquante : arrêt
-    if args.step in ("patch", "refine") and not is_cucumber_client:
-        try:
-            restored = analysis_publication.ensure_local(target_issue)
-        except analysis_publication.IncompleteAnalysis as e:
-            print(f"[ANALYSE] ⛔ {e}")
-            sys.exit(2)
-        except RuntimeError as e:
-            print(f"[ANALYSE] ⛔ Aucune analyse locale ({cadrage_file}) et analyse illisible dans Jira : {e}")
-            sys.exit(2)
-        if restored["source"] in ("commentaires", "description"):
-            print(f"[ANALYSE] {cadrage_file} absent : {restored['message']} ({len(restored['texte'])} caractères, "
-                  f"aucune troncature), fichier reconstitué.")
-        elif not restored["source"]:
-            print(f"[ANALYSE] ⛔ Aucune analyse pour {target_issue} (ni {cadrage_file}, ni dans Jira).")
-            sys.exit(2)
     cadrage_before_run = _read_text(cadrage_file)
-    epic_previous_manifest = load_epic_manifest(target_issue) if args.step == "epic-cadrage" else {}
+    epic_previous_manifest = {}
     run_started_at = time.time()
 
     # Accès base en lecture seule (cadrage, refine, patch) ; le mot de passe reste dans le .env
@@ -1493,32 +826,6 @@ def main():
         "odatio_version": odatio_version,
     }
 
-    # Construction du prompt selon l'étape demandée
-    if args.step == "cadrage":
-        prompt = render_prompt("cadrage", **prompt_values)
-    elif args.step == "epic-cadrage":
-        manifest_file = epic_manifest_path(target_issue)
-        known_keys = {t.get("key") for t in epic_previous_manifest.get("tasks", [])}
-        other_children = [c for c in get_epic_children(target_issue) if c["key"] not in known_keys]
-        children_block = ""
-        if other_children:
-            children_block = (
-                "\nTickets déjà rattachés à l'épopée (ne propose pas de tâche pour un besoin qu'ils couvrent déjà) :\n"
-                + "\n".join(f"- {c['key']} [{c['status']}] {c['summary']}" for c in other_children) + "\n"
-            )
-        revision_block = ""
-        if epic_previous_manifest.get("tasks"):
-            revision_block = "\n" + render_prompt(
-                "epic_revision", manifest_file=manifest_file,
-                previous_manifest_json=json.dumps(epic_previous_manifest, ensure_ascii=False, indent=2),
-                revision_instructions=args.feedback or "aucune : vérifie et complète le découpage existant",
-            )
-        prompt = render_prompt("epic_cadrage", **prompt_values, manifest_file=manifest_file,
-                               children_block=children_block, revision_block=revision_block)
-    elif args.step == "refine":
-        prompt = render_prompt("refine", **prompt_values, feedback=args.feedback)
-    if args.step in ("cadrage", "refine", "epic-cadrage") and not is_cucumber_client:
-        prompt += estimation_prompt(target_project, target_issue, jira_context, epic=args.step == "epic-cadrage")
     if is_cucumber_client and args.simple_depot:
         # Étape 2 de l'onglet simplifié : le dépôt <client>-cucumber peut ne pas encore exister
         sys.exit(run_simple_depot(args.client_name, args.client_repo or os.getenv("BITBUCKET_CLIENT_REPO_PATH", ""),
@@ -1563,8 +870,6 @@ def main():
         sys.exit(run_cucumber_client(args, target_issue, local_client_repo, local_std_repo, local_cucumber_std_repo,
                                      odatio_version, cucumber_repo_dir, token_saving_rules, python_exe,
                                      workspace_dir))
-    elif args.step == "patch":
-        prompt = render_prompt("patch_cucumber" if args.generate_cucumber else "patch", **prompt_values)
     elif is_postmerge:
         merged_repo_dir = find_local_repo_dir(args.repo_slug, [local_client_repo, local_std_repo])
         args.cucumber_repo = args.cucumber_repo or resolve_cucumber_repo(local_client_repo)
@@ -1655,13 +960,6 @@ def main():
     if returncode == 0 and not session_limit_hit:
         print(f"\n=== Étape {args.step.upper()} terminée avec succès pour {target_issue} ===")
         
-        # Chiffrage : total recalculé sans IA (somme des activités) avant mémoire et relecture
-        if args.step in ("cadrage", "refine") and produced(cadrage_file, run_started_at):
-            finalize_estimation(cadrage_file, target_project)
-        elif args.step == "epic-cadrage":
-            for task in load_epic_manifest(target_issue).get("tasks", []):
-                if task.get("file") and produced(task["file"], run_started_at):
-                    finalize_estimation(task["file"], target_project)
         # Enregistrement en mémoire / capitalisation d'expérience
         cadrage_content = _read_text(cadrage_file)
         # Connaissances partagées : champs communs des analyses du ticket
@@ -1672,51 +970,7 @@ def main():
         knowledge_subject = jira_context.get("summary") or target_issue
         if args.step in ("cadrage", "refine", "cadrage-reponses") and produced(cadrage_file, run_started_at):
             share_knowledge(cadrage_content, target_project, "cadrage", knowledge_subject, **knowledge)
-        if args.step == "cadrage":
-            if _safe_memory(save_cadrage_memory, target_issue, target_project,
-                            cadrage_text=cadrage_content, jira_context=jira_context):
-                print(f"[MÉMOIRE] Besoin initial et cadrage enregistrés pour {target_issue}.")
-            print_draft_status(target_issue)
-        elif args.step == "epic-cadrage":
-            manifest_file = epic_manifest_path(target_issue)
-            # En révision, l'agent peut ne retoucher que les analyses : le manifeste existant reste valable
-            is_revision = bool(epic_previous_manifest.get("tasks"))
-            if not os.path.exists(manifest_file) or (not is_revision and os.path.getmtime(manifest_file) < run_started_at):
-                print(f"[ÉPOPÉE] ❌ L'agent n'a pas écrit le manifeste '{manifest_file}' pendant cette exécution.")
-                sys.exit(1)
-            if args.feedback.strip():
-                _safe_memory(save_cadrage_memory, target_issue, target_project, jira_context=jira_context)
-                _safe_memory(save_refine_feedback, target_issue, args.feedback)
-            if not finalize_epic_draft(target_issue, epic_previous_manifest):
-                sys.exit(1)
-            task_keys = [t["key"] for t in load_epic_manifest(target_issue).get("tasks", []) if t.get("key")]
-            share_knowledge(epic_markdown(target_issue), target_project, "decoupage-epopee", knowledge_subject,
-                            **{**knowledge, "tickets": [target_issue] + task_keys})
-        elif args.step == "refine":
-            if _safe_memory(save_refine_feedback, target_issue, args.feedback,
-                            previous_cadrage=cadrage_before_run, updated_cadrage=cadrage_content):
-                print(f"[MÉMOIRE] Consigne de révision et écarts enregistrés pour {target_issue}.")
-            print_draft_status(target_issue)
-        elif args.step == "patch":
-            # Seuls les patchs produits pendant CETTE exécution
-            patch_paths = [f for f in os.listdir(".")
-                           if f.startswith(f"{target_issue}-") and f.endswith(".patch")
-                           and os.path.getmtime(f) >= run_started_at]
-            if not patch_paths:
-                print("[MÉMOIRE] ⚠️ Aucun patch généré pendant cette exécution : mémoire non mise à jour.")
-            else:
-                if _safe_memory(save_patch_memory, target_issue, patch_paths, agent_output=stdout_output,
-                                final_cadrage=cadrage_content, jira_context=jira_context):
-                    print(f"[MÉMOIRE] Livrable validé indexé : {', '.join(patch_paths)}.")
-                publish_release_note(target_issue, release_note_file, run_started_at)
-                # Registre local des livraisons (lu par agent-manager-savoye) : pièces jointes vérifiées en lecture
-                if livraisons.noter_patch(target_issue, patch_paths):
-                    print(f"[LIVRAISON] Patch(s) de {target_issue} notés dans le registre des livraisons.")
-                share_knowledge(patch_recap(target_issue, patch_paths, stdout_output), target_project, "recap-patch",
-                                knowledge_subject, **knowledge)
-                if produced(release_note_file, run_started_at):
-                    share_file(release_note_file, target_project, "release-note", knowledge_subject, **knowledge)
-        elif is_postmerge:
+        if is_postmerge:
             if not finalize_postmerge(args, target_issue, postmerge_summary, description_file,
                                       workspace_dir, run_started_at, stdout_output, knowledge):
                 sys.exit(1)
@@ -1990,43 +1244,6 @@ def business_rules_errors(profile: dict, worktree: str, files: list) -> list:
     except Exception as e:  # noqa: BLE001
         print(f"[RÈGLES MÉTIER] Contrôle impossible ({str(e)[:160]}).")
         return []
-
-
-def estimation_prompt(project: str, issue_key: str, jira_context: dict, epic: bool = False) -> str:
-    """
-    Consignes de la section « Chiffrage » avec l'historique de calibrage : temps réels des tickets livrés d'abord
-    enregistrés dans la mémoire, puis tickets similaires de la mémoire et de Jira. ESTIMATION_ENABLED=0 : ''.
-    """
-    if os.getenv("ESTIMATION_ENABLED", "1").strip() == "0":
-        return ""
-    query_text = f"{(jira_context or {}).get('summary', '')}\n{(jira_context or {}).get('description', '')[:3000]}"
-    try:
-        for item in estimation.record_actuals(project):
-            print(f"[CHIFFRAGE] {item['cle']} livré : {item['valeur']} {item['unite']} réellement passés pour "
-                  f"{item['chiffrage']} chiffrés (écart {item['ecart']}).")
-    except Exception as e:  # noqa: BLE001 - mémoire ou Jira illisible : calibrage sans retour d'expérience
-        print(f"[CHIFFRAGE] ⚠️ Temps réels non relus ({e}).")
-    config = estimation.settings(project)
-    history = (estimation.memory_history(project, query_text, issue_key, (jira_context or {}).get("components"))
-               + estimation.jira_history(project, query_text, issue_key, config))
-    print(f"[CHIFFRAGE] Unité {config['unite']}, {len(history)} ticket(s) similaire(s) pour le calibrage"
-          + ("" if history else " : aucun historique exploitable, fourchette élargie demandée") + ".")
-    return estimation.prompt_block(project, history, epic)
-
-
-def finalize_estimation(path: str, project: str) -> None:
-    """Section « Chiffrage » d'une analyse écrite : total recalculé (somme des activités) et contrôle signalé."""
-    text = _read_text(path)
-    if not text or os.getenv("ESTIMATION_ENABLED", "1").strip() == "0":
-        return
-    fixed, changed = estimation.normalize(text, estimation.settings(project)["unite"])
-    if changed:
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(fixed)
-        print(f"[CHIFFRAGE] {path} : total recalculé (somme des activités) et unité du projet.")
-    problems = estimation.check(fixed, estimation.settings(project))
-    if problems:
-        print(f"[CHIFFRAGE] ⚠️ {path} : " + " ; ".join(problems))
 
 
 ANTICIPATION_FILE = "anticipation.json"
@@ -3978,12 +3195,6 @@ def fix_own_init(client: str, worktree: str, init: dict, verify_mode: str, init_
             break
         errors = [f"l'init échoue encore : {init['message']}"]
     return init
-
-
-# Copie locale du Standard préparée au démarrage (lectures des contrôles hors du flux principal)
-STD_LOCAL_ROOT = [""]
-# Source du Standard pour les contrôles déterministes : RemoteStandard (Bitbucket) ou dossier de clones
-STD_READER = [""]
 
 
 def init_jobs_checker(client: str, client_root: str, std_root: str, version: str):
@@ -7670,34 +6881,6 @@ def run_cucumber_client(args, work_key: str, local_client_repo: str, local_std_r
     print(f"[TOKENS TOTAL] entrée={total['tokens_entree']} | cache écrit={total['cache_ecrit']} | "
           f"cache lu={total['cache_lu']} | sortie={total['tokens_sortie']} | coût={cost}")
     return exit_code
-
-
-def finalize_epic_draft(epic_key: str, previous_manifest: dict) -> bool:
-    """
-    Découpage rédigé ou révisé par l'agent : il reste un brouillon local. Aucune tâche n'est créée ni mise à jour
-    dans Jira avant la validation du découpage par l'utilisateur (étape epic-sync).
-    """
-    manifest = load_epic_manifest(epic_key)
-    if not manifest.get("tasks"):
-        print(f"[ÉPOPÉE] ❌ Manifeste '{epic_manifest_path(epic_key)}' absent, illisible ou sans tâche.")
-        return False
-    # Clés des tâches déjà créées, si l'agent les a perdues en réécrivant le manifeste
-    restore_epic_keys(manifest, previous_manifest or {})
-    attached = attach_existing_analyses(manifest)
-    save_epic_manifest(epic_key, manifest)
-    if attached:
-        print(f"[ÉPOPÉE] Analyse rattachée à une tâche existante, écrite dans son fichier local : "
-              f"{', '.join(f'{k}-cadrage.md' for k in attached)} (brouillon, publiée à la validation).")
-    for task in missing_analyses(manifest):
-        print(f"[ÉPOPÉE] ❌ {task.get('key') or task.get('summary')} : analyse absente (fichier "
-              f"'{task.get('file')}' vide ou manquant) — générer ou réviser le découpage.")
-    drafts = draft_tasks(manifest)
-    created = [t for t in manifest["tasks"] if t.get("key")]
-    print(f"[ÉPOPÉE] Découpage de {epic_key} en brouillon : {len(manifest['tasks'])} tâche(s)"
-          + (f", dont {len(drafts)} à créer dans Jira" if drafts else "")
-          + (f" ; analyses à republier après validation : {', '.join(t['key'] for t in created)}" if created else "")
-          + ". Rien n'est créé ni publié dans Jira avant la validation du découpage.")
-    return True
 
 
 def finalize_postmerge(args, source_issue: str, summary: str, description_file: str,

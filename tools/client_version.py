@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 
 from tools import standard_version as sv
 from tools.cucumber_tools import STD_CACHE_DIR, _git, _read_json, _write_json, git_repos
+from agent_socle.depots import cucumber_std_ref, cucumber_std_names, _version_key, name_rank  # noqa: E402,F401 — extraits au socle
 
 FIELD = "version_client"
 INTEGRATION = "integration"
@@ -333,42 +334,6 @@ def label(entry: dict) -> str:
 # 2. Déduction
 # ---------------------------------------------------------------------------
 
-def _version_key(text: str) -> tuple:
-    short = sv.normalize(text)[0]
-    return tuple(int(p) for p in short.split(".")) if short else ()
-
-
-def cucumber_std_ref(version: str, refs: list) -> dict:
-    """
-    Référence du Cucumber Standard pour la version du Standard `version`, parmi ses branches et tags `refs`
-    (noms) : release/<v>, v<v>, <v> ; à défaut la version existante la plus proche INFÉRIEURE, avec avertissement ;
-    aucune : {"ref": ""} et avertissement (jamais de repli sur master). {"ref", "version", "avertissement"}.
-    """
-    wanted = _version_key(version)
-    if not wanted:
-        return {"ref": "", "version": "", "avertissement": f"version du Standard « {version or '?'} » illisible : "
-                                                            f"référence du Cucumber Standard à choisir"}
-    short = sv.normalize(version)[0]
-    names = list(dict.fromkeys(r for r in refs or [] if r))
-    for candidate in (f"release/{short}", f"v{short}", short):
-        if candidate in names:
-            return {"ref": candidate, "version": short, "avertissement": ""}
-    versioned = [(k, n) for n in names if (k := _version_key(n)) and re.fullmatch(r"(?:release/|v)?[\d.]+", n)]
-    lower = [(k, n) for k, n in versioned if k[:2] < wanted[:2]]
-    if not lower:
-        return {"ref": "", "version": "", "avertissement": f"aucune référence du Cucumber Standard pour {short} ni "
-                                                            f"pour une version inférieure : à choisir (pas de repli "
-                                                            f"sur master)"}
-    key, name = max(lower, key=lambda kn: (kn[0], name_rank(kn[1])))
-    found = ".".join(map(str, key[:2]))
-    return {"ref": name, "version": found,
-            "avertissement": f"Cucumber Standard {short} absent (aucune branche ni tag release/{short}, v{short}, "
-                             f"{short}) : version existante la plus proche inférieure retenue, {name}"}
-
-
-def name_rank(name: str) -> int:
-    return 2 if name.startswith("release/") else 1 if name.startswith("v") else 0
-
 
 def kis_registry(builds: list, saved: dict = None) -> dict:
     """
@@ -578,20 +543,6 @@ def list_versions(client_name: str, client_repo: str, std_repo: str, builds: lis
     versions = merge_versions(git_versions(repo), maven["versions"], owner, name)
     save_versions(client_name, versions, maven["erreur"])
     return {"versions": versions, "depot": repo.name, "erreur": maven["erreur"]}
-
-
-def cucumber_std_names(cucumber_std_dir: str) -> list:
-    """Branches distantes et tags du clone du Cucumber Standard (noms sans origin/)."""
-    if not cucumber_std_dir:
-        return []
-    out = _git(cucumber_std_dir, "for-each-ref", "--format=%(refname)", "refs/remotes/origin", "refs/tags").stdout
-    names = []
-    for ref in out.splitlines():
-        if ref.startswith("refs/tags/"):
-            names.append(ref[len("refs/tags/"):])
-        elif not ref.endswith("/HEAD"):
-            names.append(ref[len("refs/remotes/origin/"):])
-    return names
 
 
 def remote_ref_names(url: str) -> list:

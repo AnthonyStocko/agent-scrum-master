@@ -12,7 +12,8 @@ from datetime import datetime
 
 import requests
 
-from tools import analysis_publication, assistant, cucumber_lock
+from agent_socle import publication
+from tools import assistant, cucumber_lock
 from agent_socle import livraisons
 from agent_socle.jenkins_tools import recent_builds
 from agent_socle.secret_tools import mask_secrets
@@ -52,7 +53,7 @@ def analyses(racine: str = WORKSPACE_DIR) -> str:
     for chemin in fichiers[:ANALYSES_MAX]:
         cle = os.path.basename(chemin)[:-len("-cadrage.md")]
         with open(chemin, encoding="utf-8", errors="replace") as f:
-            etat = analysis_publication.status(cle, f.read())
+            etat = publication.status(cle, f.read())
         a_valider = "" if etat["publiee"] else " ← à valider"
         lignes.append(f"- {cle} (modifiée le {_date(os.path.getmtime(chemin))}) : {etat['libelle']}{a_valider}")
     if len(fichiers) > ANALYSES_MAX:
@@ -63,12 +64,12 @@ def analyses(racine: str = WORKSPACE_DIR) -> str:
 def analyse(ticket: str, racine: str = WORKSPACE_DIR) -> str:
     """État de l'analyse d'un ticket et ses titres de sections."""
     cle = _cle(ticket)
-    chemin = os.path.join(racine, analysis_publication.cadrage_path(cle))
+    chemin = os.path.join(racine, publication.cadrage_path(cle))
     if not os.path.exists(chemin):
         return f"Aucune analyse de {cle} dans l'agent Scrum Master."
     with open(chemin, encoding="utf-8", errors="replace") as f:
         texte = f.read()
-    etat = analysis_publication.status(cle, texte)
+    etat = publication.status(cle, texte)
     titres = [l.lstrip("#").strip() for l in texte.splitlines() if l.startswith("#")][:20]
     return _masque(f"Analyse de {cle} (modifiée le {_date(os.path.getmtime(chemin))}) : {etat['libelle']}.\n"
                    f"Sections : {' · '.join(titres) or '(aucun titre)'}")

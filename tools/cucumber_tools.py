@@ -19,6 +19,7 @@ from collections import Counter
 from datetime import datetime
 
 from tools import cucumber_studio
+from agent_socle.depots import STD_REF_LOG  # noqa: E402,F401 — extraits au socle
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE_ROOT = os.path.join(WORKSPACE_DIR, ".tmp", "cucumber")
@@ -69,8 +70,6 @@ DEFAULT_EXCLUDE_GLOBS = (
 DEFAULT_PARAM_GLOBS = "*.properties,*i18n*,*messages*,*.sql,*param*.xml,*parameter*,*.csv"
 # Dépôts front (écrans AngularJS) : aucun step du Cucumber Standard ne pilote l'interface web
 DEFAULT_EXCLUDE_REPOS = "*-frontend,*-front,*-ui"
-# Ligne de journal de main.py lue par l'onglet Cucumber : référence Git retenue du Cucumber Standard
-STD_REF_LOG = "[CUCUMBER STD] Référence Git retenue :"
 
 STUDIO_FILES = re.compile(r"^(customized\.(xml|json)|original\.xml|i18n\..+\.txt)$")
 STEP_PATTERN = r"@(Given|When|Then|And|But)\("

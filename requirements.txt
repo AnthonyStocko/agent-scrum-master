@@ -1,5 +1,5 @@
 # Socle commun des agents (pendant le chantier : pip install -e ../agent-socle)
-agent-socle @ git+https://github.com/AnthonyStocko/agent-socle.git@v0.4.0
+agent-socle @ git+https://github.com/AnthonyStocko/agent-socle.git@v0.5.0
 streamlit[auth]>=1.64
 python-dotenv>=1.0
 requests>=2.31
