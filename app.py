@@ -15,7 +15,7 @@ from urllib.parse import urlencode
 from agent_socle.jira_tools import get_jira_issue_summary
 from agent_socle.db_tools import DB_TYPES
 # Lancement de main.py et journal : socle (commun aux IHM des agents)
-from agent_socle import mcp_servers
+from agent_socle import ihm_groundcover
 from agent_socle.memory_tools import (load_ticket_memory,
     get_all_memories,
     clear_memory,
@@ -692,23 +692,8 @@ if PAGE == "configuration":
             help="Répertoire où sont déposés les logs applicatifs du serveur de l'environnement de test (*.log, "
                  "rotations, .gz) : à chaque import d'un run, la fenêtre de chaque échec y est extraite (secrets "
                  "masqués) et donnée au correcteur, sans export ni réimport manuel. Vide : non utilisé.").strip()
-        st.markdown("**Logs de l'environnement de test dans groundcover** (lecture seule)")
-        with st.container(horizontal=True):
-            env_values["GROUNDCOVER_API_KEY"] = secret_input(
-                "GROUNDCOVER_API_KEY",
-                help="Clé d'API groundcover (Settings → Access → API Keys), de préférence d'un compte en lecture "
-                     "seule.").strip()
-            env_values["GROUNDCOVER_BACKEND_ID"] = st.text_input(
-                "GROUNDCOVER_BACKEND_ID", value=os.getenv("GROUNDCOVER_BACKEND_ID", ""),
-                help="Identifiant du backend (comptes multi-backend seulement, même écran que la clé).").strip()
-            env_values["GROUNDCOVER_API_URL"] = st.text_input(
-                "GROUNDCOVER_API_URL", value=os.getenv("GROUNDCOVER_API_URL", ""),
-                placeholder="https://api.groundcover.com").strip()
-        env_values["CUCUMBER_GROUNDCOVER_FILTER"] = st.text_input(
-            "CUCUMBER_GROUNDCOVER_FILTER", value=os.getenv("CUCUMBER_GROUNDCOVER_FILTER", ""),
-            placeholder="namespace:apparel-cucumber",
-            help="Filtre gcQL de l'environnement où Jenkins joue les tests (namespace, workload, cluster…), ajouté à "
-                 "toute requête : obligatoire, sans lui les logs groundcover ne sont pas lus.").strip()
+        # Accès à l'API groundcover : composant commun (agent_socle.ihm_groundcover)
+        env_values.update(ihm_groundcover.champs_acces_api())
         env_values["CUCUMBER_SLOW_SCENARIO_SECONDS"] = str(int(slow_seconds))
         env_values["CUCUMBER_LOG_EXPORT_MAX_LINES"] = str(int(export_cap)) if export_cap else ""
         jacoco = st.checkbox(
@@ -726,33 +711,8 @@ if PAGE == "configuration":
             help="Mode local : chemin du jacoco.exec produit par l'environnement client.")
 
         st.markdown("---")
-        st.markdown("#### :material/hub: Serveurs MCP")
-        st.caption("Par défaut, les appels Claude de l'agent ne chargent aucun serveur MCP (--strict-mcp-config). "
-                   "Seul Groundcover peut être ajouté, en lecture des logs serveur, pour les étapes de diagnostic "
-                   "(échecs d'un run, correction de l'init, correction après exécution) ; jamais pour l'analyse d'un "
-                   "ticket ni la génération d'un patch. Aucun jeton dans le .env : la connexion se fait par "
-                   "navigateur et reste dans le dossier de configuration de Claude Code (compte Claude ci-dessous).")
-        env_values[mcp_servers.ENABLED_ENV] = "1" if st.checkbox(
-            "Groundcover activé", value=os.getenv(mcp_servers.ENABLED_ENV, "").strip() == "1",
-            help="GROUNDCOVER_MCP_ENABLED : donne le serveur MCP Groundcover (outils de lecture seulement) aux "
-                 "étapes de diagnostic.") else "0"
-        env_values[mcp_servers.URL_ENV] = st.text_input(
-            "Adresse du serveur MCP Groundcover", value=os.getenv(mcp_servers.URL_ENV, ""),
-            placeholder="Adresse donnée par « Connect to MCP » dans Groundcover",
-            help="GROUNDCOVER_MCP_URL. Collez l'adresse, ou la commande / la configuration JSON proposée par « Connect "
-                 "to MCP » : l'adresse et les en-têtes non secrets en sont extraits à l'enregistrement. Un en-tête "
-                 "d'authentification (jeton, clé) est refusé.").strip()
-        with st.container(horizontal=True):
-            env_values[mcp_servers.HEADERS_ENV] = st.text_input(
-                "En-têtes non secrets (facultatif)", value=os.getenv(mcp_servers.HEADERS_ENV, ""),
-                placeholder="Nom: valeur ; Nom: valeur",
-                help="GROUNDCOVER_MCP_HEADERS : en-têtes demandés par « Connect to MCP » (fuseau horaire, "
-                     "identifiant de tenant…). Jamais de jeton.").strip()
-            env_values[mcp_servers.TOOLS_ENV] = st.text_input(
-                "Outils autorisés (facultatif)", value=os.getenv(mcp_servers.TOOLS_ENV, ""),
-                placeholder="Vide : outils de lecture relevés par « Tester »",
-                help="GROUNDCOVER_MCP_TOOLS : noms complets (mcp__groundcover__…), séparés par des virgules. Seuls "
-                     "les outils de lecture (get, list, query, search…) sont gardés.").strip()
+        # Serveurs MCP (Groundcover seul) : composant commun (agent_socle.ihm_groundcover)
+        env_values.update(ihm_groundcover.champs_serveurs_mcp(compte="compte Claude ci-dessous"))
 
         st.markdown("---")
         st.markdown("#### 🔑 Compte Claude")
@@ -924,31 +884,16 @@ if PAGE == "configuration":
         st.markdown("---")
         submit_save = st.form_submit_button("💾 Enregistrer la configuration complète", type="primary", use_container_width=True)
 
-        mcp_refused = ""
-        if submit_save and env_values.get(mcp_servers.URL_ENV):
-            # « Connect to MCP » collé tel quel : adresse et en-têtes non secrets extraits, jetons refusés
-            connect = mcp_servers.parse_connect(env_values[mcp_servers.URL_ENV])
-            if connect["erreur"]:
-                mcp_refused = f"Adresse Groundcover refusée : {connect['erreur']}."
-            else:
-                env_values[mcp_servers.URL_ENV] = connect["url"]
-                headers = {**connect["headers"], **mcp_servers.parse_headers(env_values[mcp_servers.HEADERS_ENV])}
-                secret = mcp_servers.secret_headers(headers)
-                env_values[mcp_servers.HEADERS_ENV] = mcp_servers.format_headers(
-                    {k: v for k, v in headers.items() if k not in secret})
-                if connect["refuses"] or secret:
-                    st.warning("En-têtes d'authentification non enregistrés (aucun jeton dans le .env) : "
-                               + ", ".join(connect["refuses"] + secret) + ". La connexion se fait par navigateur "
-                               "(« Se connecter à Groundcover »).", icon=":material/key_off:")
-        if mcp_refused:
-            st.error(mcp_refused + " Configuration non enregistrée.", icon=":material/error:")
-        elif submit_save:
+        # « Connect to MCP » collé tel quel : adresse et en-têtes non secrets extraits, jetons refusés ; variables du
+        # manager écartées. None : adresse refusée, rien d'enregistré
+        to_save = ihm_groundcover.valider(env_values) if submit_save else None
+        if to_save is not None:
             # Les secrets sont enregistrés tels quels ; les autres valeurs sans espaces superflus. Écriture unique
             # (une ligne par valeur, échappements, relecture contrôlée)
             try:
                 env_tools.write_env(ENV_PATH, {
                     name: value if name.endswith(("_TOKEN", "_SECRET", "_PASSWORD", "_API_KEY")) else value.strip()
-                    for name, value in env_values.items() if not config_commune.geree(name)})
+                    for name, value in to_save.items() if not config_commune.geree(name)})
             except ValueError as e:
                 st.error(f"Configuration non enregistrée correctement : {e}.")
             else:
